@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="しめじラボ">
+<meta name="theme-color" content="#5A3E2B">
+<meta name="description" content="しめじ太郎がつくった、動かして学べる・遊べるものの置き場です。">
+<link rel="icon" href="favicon.svg?v=1" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=1">
+<title>しめじラボ</title>
+<style>
+  :root{
+    --ink:#16324F; --ink-soft:#5C7996; --paper:#F7FAFC; --grid:#DFE9F1; --line:#C6D6E3;
+    --amber:#E0982C; --amber-soft:#FBEED6; --page:#5A3E2B;
+    --mono: ui-monospace, "SF Mono", Consolas, "Courier New", monospace;
+    --gothic: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    padding:24px calc(18px + env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
+    font-family:var(--gothic); color:var(--ink); font-size:16px; -webkit-tap-highlight-color:transparent;
+    background-color:var(--paper);
+    background-image:linear-gradient(var(--grid) 1px, transparent 1px),linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size:24px 24px;
+  }
+  .wrap{max-width:900px; margin:0 auto}
+  .back{display:inline-block; font-size:13px; color:var(--ink-soft); text-decoration:none; margin-bottom:12px; padding:4px 0}
+  .back:hover{color:var(--ink)}
+  header{border-bottom:2.5px solid var(--ink); padding-bottom:16px; margin-bottom:20px; position:relative}
+  header::after{content:""; position:absolute; left:0; bottom:-2.5px; width:64px; height:2.5px; background:var(--page)}
+  .title{display:flex; align-items:center; gap:14px}
+  .title .mark{flex:0 0 46px; width:46px; height:46px}
+  h1{font-size:30px; margin:0; letter-spacing:.1em; font-weight:700}
+  h1 small{display:block; font-family:var(--mono); font-size:11px; letter-spacing:.3em; color:var(--ink-soft); font-weight:400; margin-top:6px}
+  .lead{font-size:14px; color:var(--ink-soft); margin:12px 0 0; line-height:1.75}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(268px, 1fr)); gap:14px}
+  .tool{display:flex; gap:14px; align-items:flex-start; text-decoration:none; color:inherit;
+    background:#fff; border:1.5px solid var(--ink); border-radius:3px; padding:16px;
+    transition:transform .12s ease, box-shadow .12s ease}
+  .tool:hover{transform:translateY(-2px); box-shadow:4px 4px 0 var(--line)}
+  .tool:focus-visible{outline:2.5px solid var(--amber); outline-offset:2px}
+  .glyph{flex:0 0 62px; width:62px; height:62px}
+  .glyph svg,.mark svg{width:100%; height:100%; display:block}
+  .body h2{font-size:17.5px; margin:0 0 2px; letter-spacing:.03em}
+  .tag{display:inline-block; font-family:var(--mono); font-size:10.5px; letter-spacing:.16em;
+    padding:3px 8px; border:1px solid var(--line); border-radius:2px; color:var(--ink-soft); margin-bottom:7px}
+  .desc{font-size:13.5px; line-height:1.7; color:var(--ink-soft); margin:0}
+  .note{font-size:12.5px; line-height:1.7; color:#8A5A12; background:var(--amber-soft); border:1px solid var(--amber); border-radius:3px; padding:8px 10px; margin:8px 0 0}
+  footer{margin-top:28px; padding-top:14px; border-top:1px solid var(--line); font-size:12px; color:var(--ink-soft); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap}
+  footer .ver{font-family:var(--mono)}
+  @media (max-width:520px){ h1{font-size:25px} .grid{grid-template-columns:1fr} }
+  .grid{grid-template-columns:repeat(auto-fill, minmax(min(100%, 360px), 1fr))}
+</style>
+</head>
+<body>
+<div class="wrap">
+  
+  <header>
+    <div class="title"><div class="mark"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="60" height="60" rx="12" fill="#5A3E2B"/><g fill="none" stroke="#FFF8EC" stroke-width="5.5" stroke-linecap="round"><path d="M21 27C24 38 28 46 30 56"/><path d="M33 22C33 36 33 46 32 56"/><path d="M45 31C41 40 37 48 34 56"/></g><g fill="#D3A574"><path d="M10 28a11 9 0 0 1 22 0Z"/><path d="M21 23a12 10 0 0 1 24 0Z"/><path d="M36 32a10 8 0 0 1 20 0Z"/></g></svg></div><h1>しめじラボ<small>SHIMEJI LAB</small></h1></div>
+    <p class="lead">しめじ太郎がつくった、動かして学べる・遊べるものの置き場です。</p>
+  </header>
+  
+  <div class="grid">
+    <a class="tool" href="https://shimeji-lab.github.io/manabi-lab/"><div class="glyph"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="60" height="60" rx="12" fill="#16324F"/><path d="M21 41h22l5.5 8.4A3 3 0 0 1 46 54H18a3 3 0 0 1-2.5-4.6Z" fill="#E0982C"/><path d="M24 11h16M28 11v15L15.6 47.6A4 4 0 0 0 19 54h26a4 4 0 0 0 3.4-6.4L36 26V11" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="body"><span class="tag">教材</span><h2>まなびラボ</h2><p class="desc">中学生向けの理科・数学の実験室。動かしながら、しくみを確かめます。</p></div></a><a class="tool" href="sims/"><div class="glyph"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="60" height="60" rx="12" fill="#0F5257"/><g fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 42q4-6 7 0q3-6 7 0"/><path d="M14 27q4-6 7 0q3-6 7 0"/><path d="M26 50q4-6 7 0q3-6 7 0"/><path d="M29 35q4-6 7 0q3-6 7 0"/></g><path d="M38 20q4.5-7 8 0q3.5-7 8 0" fill="none" stroke="#E0982C" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="body"><span class="tag">眺める</span><h2>シミュレーター</h2><p class="desc">鳥や魚の群れなどの、動きをながめて楽しむシミュレーター。</p></div></a><a class="tool" href="https://shimeji-lab.github.io/games/"><div class="glyph"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="60" height="60" rx="12" fill="#C8433A"/><path d="M17 23h6v7h7v6h-7v7h-6v-7h-7v-6h7z" fill="#fff"/><circle cx="44" cy="27" r="5.5" fill="#FFD27A"/><circle cx="51" cy="38" r="5.5" fill="#fff"/></svg></div><div class="body"><span class="tag">遊ぶ</span><h2>ゲーム置き場</h2><p class="desc">ブロック積み・シューティング・立体の並べっこなど、自作ゲームの一覧。</p></div></a><a class="tool" href="tools/"><div class="glyph"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="60" height="60" rx="12" fill="#2F7D5B"/><g transform="rotate(45 32 32)"><rect x="28" y="26" width="8" height="32" rx="4" fill="#fff"/><circle cx="32" cy="18" r="12" fill="#fff"/><rect x="28" y="3" width="8" height="15" rx="1.5" fill="#2F7D5B"/></g></svg></div><div class="body"><span class="tag">使う</span><h2>ツール</h2><p class="desc">買い物リストなど、暮らしの中で使っている小さな道具。</p></div></a>
+  </div>
+  <footer><span>つくった人：しめじ太郎</span><span class="ver" id="ver"></span></footer>
+</div>
+<script>
+  const VERSION = "v1.0.0";
+  document.getElementById("ver").textContent = VERSION;
+</script>
+</body>
+</html>
