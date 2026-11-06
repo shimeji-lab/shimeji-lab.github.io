@@ -1,0 +1,1306 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="ARI"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>ARI</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!--
+  ARI 蟻の行列シミュレータ  v0.5「TRAIL & BRIDGE」
+  準拠：研究準拠シミュレータシリーズ 設計基準 v1.0（10テーマ比較 3 アリ S2a,b）
+
+  更新履歴
+  v0.5 2026-11-04  障害物を置けるように。庭の「置く」に道具（砂糖・石・小枝）を追加。石はタップ、小枝はなぞって置き、置いた物はタップで外せる。
+                   障害物の下のにおいは消え、蟻はまわり道を探す（エンジン v0.5：小枝＝太さのある線分の障害物）
+  v0.4 2026-11-04  引いて見たときに暗くならないように（地面を広く、遠くは土色のかすみ、引ける距離と角度に上限）。
+                   庭を 120cm 四方に広げ、端は見えない壁ではなくなだらかに引き返す。長く探しても見つからない蟻は空荷で巣へ戻る。
+                   巣の近くで迷った蟻は、目印で巣の位置を直す（エンジン v0.4）
+  v0.3 2026-11-04  砂糖をタップで取り除けるように。帰り道を自然に（エンジン v0.3）：覚えている巣の位置は歩いた距離に応じて誤差がたまり（経路積分）、
+                   向きはゆるく揺らぎ、巣の方向に合うにおいの道があればたどる。覚えた位置に巣がなければ輪を広げて探し、巣の近くでは巣のにおいで入る
+  v0.2 2026-11-03  実機確認のフィードバック：大きさの釣り合いを実物に近く（巣の入口 直径約7mm、砂糖の粒 約0.8mm、葉を小さく）、
+                   蟻を黒く、最初の視点を蟻が見える近さに。砂糖は粒ごとに持ち、蟻はいちばん近い粒まで歩いて咥える（エンジン v0.2）。
+                   端末で直接開く用のファイル（viewport 指定入り）も用意
+  v0.1 2026-11-03  初版。場面「庭」（砂糖への行列。においの格子と嗅ぎ分け、拡張）と「二本の橋」（Goss ほか 1989 の二枝モデル）。
+                   操作「眺める／砂糖（橋ではやり直す）／なぞる」、においの表示、裏モード（選択の割合・目印の量・検証）
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Unbounded:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
+<style>
+/* Layout: 全画面の地面に、上端の細い情報帯と下端のモード切替だけを浮かべる。シリーズ共通の構成で、意図的にダーク固定。 */
+:root {
+  --soil: #120e0a;
+  --glass: rgba(20, 16, 12, 0.6);
+  --glass-strong: rgba(18, 14, 10, 0.92);
+  --line: rgba(240, 225, 200, 0.16);
+  --ink: #f1ece3;
+  --mute: #a89d8d;
+  --sugar: #f3ead8;
+  --sugar-ink: #241c10;
+  --trail: #9fd6c2;
+  --vignette: rgba(0, 0, 0, 0.4);
+  --f-mark: "Unbounded", "Zen Kaku Gothic New", system-ui, sans-serif;
+  --f-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 14px;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  background: var(--soil); color: var(--ink); font-family: var(--f-ui); font-size: 14px;
+  overflow: hidden; overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--sugar); outline-offset: 2px; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at 50% 48%, transparent 55%, var(--vignette) 100%); }
+
+.top {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mark { font-family: var(--f-mark); font-weight: 600; font-size: 15px; letter-spacing: 0.32em; color: var(--ink); opacity: 0.92; white-space: nowrap; }
+.count { display: flex; align-items: baseline; gap: 4px; font-family: var(--f-num); font-variant-numeric: tabular-nums; color: var(--sugar); font-size: 15px; white-space: nowrap; }
+.count small { font-family: var(--f-ui); font-size: 11px; color: var(--mute); }
+.top .spacer { flex: 1; min-width: 0; }
+.icon-btn {
+  pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; border: 1px solid var(--line);
+  background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); cursor: pointer;
+}
+.icon-btn svg { width: 20px; height: 20px; }
+
+.story, .paused-chip {
+  position: fixed; z-index: 5; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + 70px); pointer-events: none; white-space: nowrap;
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--glass); font-size: 12px; letter-spacing: 0.08em; transition: opacity 1.2s;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.story { color: var(--sugar); }
+.story.fade { opacity: 0; }
+.paused-chip { color: var(--trail); top: calc(env(safe-area-inset-top, 0px) + 110px); }
+
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mode-hint {
+  max-width: 100%; padding: 6px 14px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line); color: var(--ink);
+  font-size: 12px; line-height: 1.6; text-align: center; transition: opacity .6s;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.mode-hint.fade { opacity: 0; }
+.modes {
+  pointer-events: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  width: min(100%, 360px); padding: 4px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.modes button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--mute); font-size: 13px; font-weight: 500; cursor: pointer; letter-spacing: 0.04em;
+  transition: background .2s, color .2s; white-space: nowrap;
+}
+.modes button svg { width: 18px; height: 18px; flex: none; }
+.modes button[aria-pressed="true"] { background: var(--sugar); color: var(--sugar-ink); }
+.tool-bar { pointer-events: auto; padding: 3px; border-radius: 12px; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.tool-bar .seg { border: 0; padding: 0; }
+.tool-bar .seg button { display: flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 12px; font-size: 12.5px; }
+.tool-bar svg { width: 16px; height: 16px; flex: none; }
+.twig-prev { position: fixed; z-index: 3; height: 5px; border-radius: 3px; background: rgba(120, 84, 52, 0.85); transform-origin: 0 50%; pointer-events: none; box-shadow: 0 0 0 1px rgba(243, 234, 216, 0.4); }
+
+.guide {
+  position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 4;
+  width: min(calc(100% - 48px), 320px); padding: 18px 20px; border-radius: var(--r);
+  background: var(--glass); border: 1px solid var(--line); text-align: center;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  pointer-events: none; line-height: 1.9; font-size: 14px; transition: opacity .5s;
+}
+.guide .sub { display: block; margin-top: 6px; font-size: 11px; color: var(--mute); }
+.guide.fade { opacity: 0; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 8;
+  top: calc(env(safe-area-inset-top, 0px) + 150px); max-width: calc(100% - 32px);
+  padding: 8px 14px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--line);
+  font-size: 12px; pointer-events: none;
+}
+.fatal { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--mute); z-index: 2; }
+.ripple { position: fixed; z-index: 3; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; border: 1.5px solid rgba(243, 234, 216, 0.6); pointer-events: none; animation: ripple .8s ease-out forwards; }
+@keyframes ripple { from { transform: scale(1); opacity: 1; } to { transform: scale(4); opacity: 0; } }
+
+.backdrop { position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.42); }
+.sheet {
+  position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 10;
+  width: min(100%, 440px); max-height: 84%; overflow-y: auto;
+  padding: 18px max(18px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 18px) max(18px, env(safe-area-inset-left, 0px));
+  border-radius: 20px 20px 0 0; background: var(--glass-strong);
+  border: 1px solid var(--line); border-bottom: 0;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  -webkit-user-select: text; user-select: text;
+}
+.sheet h2 { margin: 0 0 4px; font-family: var(--f-mark); font-weight: 400; font-size: 13px; letter-spacing: 0.24em; color: var(--mute); }
+.sheet .sub-h { margin: 18px 0 0; }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.row .lbl { flex: 1; min-width: 0; }
+.row .lbl small { display: block; color: var(--mute); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+.switch { position: relative; width: 48px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(240, 225, 200, 0.16); transition: background .2s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); transition: transform .2s; }
+.switch input:checked + span { background: var(--sugar); }
+.switch input:checked + span::after { transform: translateX(20px); background: var(--sugar-ink); }
+.switch input:focus-visible + span { outline: 2px solid var(--sugar); outline-offset: 2px; }
+.seg { display: flex; gap: 4px; padding: 3px; border-radius: 10px; border: 1px solid var(--line); flex: none; }
+.seg button { border: 0; background: transparent; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--mute); cursor: pointer; min-height: 32px; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--sugar); color: var(--sugar-ink); }
+.scenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; padding: 8px 0 12px; border-bottom: 1px solid var(--line); }
+.scenes button { text-align: left; border: 1px solid var(--line); background: rgba(240, 225, 200, 0.04); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: grid; gap: 2px; min-height: 60px; align-content: start; }
+.scenes button b { font-weight: 500; font-size: 13px; }
+.scenes button small { color: var(--mute); font-size: 11px; line-height: 1.45; }
+.scenes button[aria-pressed="true"] { border-color: var(--sugar); background: rgba(243, 234, 216, 0.08); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 14px 0 4px; }
+.chip { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: rgba(240, 225, 200, 0.05); cursor: pointer; font-size: 13px; }
+.ver { margin-top: 14px; font-size: 11px; color: var(--mute); line-height: 1.7; }
+.ver b { font-family: var(--f-num); font-weight: 500; color: var(--ink); }
+#ver { -webkit-user-select: none; user-select: none; }
+.hist { padding: 12px 0 0; }
+.hist summary { cursor: pointer; font-size: 13px; color: var(--mute); }
+.vlist { display: grid; gap: 6px; padding: 8px 0; font-size: 11.5px; color: var(--mute); }
+.vlist b { color: var(--ink); font-family: var(--f-num); font-weight: 500; }
+
+.debug {
+  position: fixed; z-index: 6; left: max(10px, env(safe-area-inset-left, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 62px);
+  width: min(calc(100% - 20px), 240px); padding: 10px 12px; border-radius: 12px;
+  background: var(--glass-strong); border: 1px solid var(--line);
+  font-family: var(--f-num); font-size: 11px; line-height: 1.55; pointer-events: none;
+}
+.debug dl { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; margin: 0; }
+.debug dt { color: var(--mute); font-family: var(--f-ui); }
+.debug dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .bottom { right: auto; width: min(44vw, 340px); align-items: flex-start; padding-right: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+  .modes { position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); width: auto; grid-template-columns: 1fr; border-radius: 26px; }
+  .modes button { flex-direction: column; gap: 2px; min-height: 50px; min-width: 66px; padding: 5px 8px; font-size: 11px; border-radius: 22px; }
+  .mode-hint { text-align: left; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide, .mode-hint, .story, .modes button, .switch span, .switch span::after { transition: none; }
+  .ripple { animation-duration: .01s; }
+}
+</style>
+
+<canvas id="scene" aria-label="地面を歩く蟻の群れ"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="top">
+  <span class="mark">ARI</span>
+  <span class="count" aria-live="polite"><span id="count">0</span><small>匹</small></span>
+  <span class="spacer"></span>
+  <button class="icon-btn" id="btnPause" aria-label="一時停止" aria-pressed="false" title="一時停止（Space）">
+    <svg id="pauseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6v12M15 6v12"/></svg>
+  </button>
+  <button class="icon-btn" id="btnSettings" aria-label="設定">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
+  </button>
+</header>
+
+<div class="story fade" id="story" aria-live="polite"></div>
+<div class="paused-chip" id="pausedChip" hidden>一時停止中</div>
+<div class="guide" id="guide" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<aside class="debug" id="debug" hidden>
+  <dl id="dbg"></dl>
+</aside>
+
+<div class="twig-prev" id="twigPrev" hidden></div>
+<div class="bottom">
+  <div class="mode-hint fade" id="hint"></div>
+  <div class="tool-bar" id="tools" hidden>
+    <div class="seg" id="tool" role="group" aria-label="置く物">
+      <button data-t="sugar" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 9.5 12 6l7 3.5v6.5L12 19.5 5 16z"/><path d="M5 9.5 12 13l7-3.5M12 13v6.5"/></svg>砂糖</button>
+      <button data-t="stone" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 16.5c0-4.5 3.4-8.5 8-8.5 4.4 0 8 3.4 8 7.6 0 1.6-1.1 2.4-2.6 2.4H6.4C5 18 4 17.6 4 16.5z"/></svg>石</button>
+      <button data-t="twig" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 18 20 6"/><path d="M12 12l1.5 4.5M15.5 9.4 19 10"/></svg>小枝</button>
+    </div>
+  </div>
+  <nav class="modes" aria-label="操作モード">
+    <button data-m="view" aria-pressed="true" title="眺める（1）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>
+      眺める
+    </button>
+    <button data-m="sugar" aria-pressed="false" title="砂糖（2）" id="modeSugar"></button>
+    <button data-m="wipe" aria-pressed="false" title="なぞる（3）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 12.5V5.6a1.6 1.6 0 0 1 3.2 0v5.9"/><path d="M12.7 11V9.8a1.6 1.6 0 0 1 3.2 0V12"/><path d="M15.9 11.2a1.6 1.6 0 0 1 3.1.4v3.6c0 3.4-2.6 6-6 6h-.6c-1.9 0-3.4-.8-4.5-2.3l-2.8-3.9a1.6 1.6 0 0 1 2.5-2l1.7 2"/><path d="M3 4.5c2.5 1 4 1 6 0" opacity=".6"/></svg>
+      なぞる
+    </button>
+  </nav>
+</div>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<section class="sheet" id="sheet" hidden aria-label="設定">
+  <h2>SCENES</h2>
+  <div class="scenes" id="optScene">
+    <button data-v="garden" aria-pressed="true"><b>庭</b><small>砂糖を見つけた蟻が仲間を呼び、行列ができる</small></button>
+    <button data-v="bridge" aria-pressed="false"><b>二本の橋</b><small>短い道と長い道。蟻はどちらを選ぶか</small></button>
+  </div>
+  <h2 class="sub-h">SETTINGS</h2>
+  <div class="row">
+    <div class="lbl">においを見る<small>蟻が残したにおいの道を、うっすら色で見せます。</small></div>
+    <label class="switch"><input type="checkbox" id="optSmell" aria-label="においを見る"><span></span></label>
+  </div>
+  <div class="row">
+    <div class="lbl">速さ</div>
+    <div class="seg" id="optSpeed"><button data-v="1" aria-pressed="true">ふつう</button><button data-v="2" aria-pressed="false">2倍</button><button data-v="4" aria-pressed="false">4倍</button></div>
+  </div>
+  <div class="row">
+    <div class="lbl">蟻の数（庭）<small>変えると最初からやり直します。</small></div>
+    <div class="seg" id="optN"><button data-v="60" aria-pressed="false">60</button><button data-v="120" aria-pressed="true">120</button><button data-v="200" aria-pressed="false">200</button></div>
+  </div>
+  <div class="row">
+    <div class="lbl">長い道の長さ（橋）<small>短い道の何倍か。同じ長さにすると、どちらかの道に偶然そろいます。変えると最初からやり直します。</small></div>
+    <div class="seg" id="optR"><button data-v="1" aria-pressed="false">同じ</button><button data-v="1.4" aria-pressed="false">1.4倍</button><button data-v="2" aria-pressed="true">2倍</button></div>
+  </div>
+  <div class="btn-row">
+    <button class="chip" id="btnResetView">視点を戻す</button>
+    <button class="chip" id="btnGuide">ガイドを再表示</button>
+    <button class="chip" id="btnRestart">最初から</button>
+    <button class="chip" id="btnClose">閉じる</button>
+  </div>
+  <section id="devSec" hidden aria-label="裏モード">
+    <h2 class="sub-h">DEVELOPER</h2>
+    <div class="row">
+      <div class="lbl">開発者表示<small>選択の割合・目印の量・運ばれた砂糖などを左上に出します。</small></div>
+      <label class="switch"><input type="checkbox" id="optDebug" aria-label="開発者表示"><span></span></label>
+    </div>
+    <details class="hist" id="testBox">
+      <summary>エンジンの検証（開くとこのブラウザで実行。数秒かかります）</summary>
+      <div class="vlist" id="vlist"></div>
+    </details>
+    <details class="hist">
+      <summary>更新履歴</summary>
+      <p class="ver">v0.5（2026-11-04）障害物（石・小枝）を置ける・外せる<br>v0.4（2026-11-04）引いても暗くならない、端で迷わない（庭を広く・空荷で帰る）<br>v0.3（2026-11-04）砂糖を取り除ける。帰り道を経路積分（誤差あり）＋においの道＋探索に<br>v0.2（2026-11-03）大きさの釣り合い、黒い蟻、砂糖を粒ごとに（近くの粒を咥える）<br>v0.1（2026-11-03）初版：庭（砂糖への行列）と二本の橋（Goss ほか 1989）。眺める・砂糖・なぞる</p>
+    </details>
+    <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
+  </section>
+  <p class="ver" id="ver"><b>ARI v0.5</b> TRAIL &amp; BRIDGE<br>
+  二本の橋は、Goss ほか（1989）の選び方の式（短い道を選ぶ確率 = (20+S)² / ((20+S)² + (20+L)²)）と、向こう端に着くまでの時間（20秒・20r秒）をそのまま使っています。庭は同じ式の形でにおいを嗅ぎ分ける拡張です。帰り道は、歩いた向きと距離から巣の位置を覚える仕組み（経路積分）を、誤差がたまる形で入れています。においが薄れる速さや誤差の大きさは本シリーズで選んだ値です。蟻の姿と歩き方は演出です。</p>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ===== ENGINE BEGIN =====
+// ARI 蟻エンジン v0.5（描画に依存しない。Node.js で試験できる）
+// v0.5：障害物に小枝（線分）を追加し、石と小枝を後から置いたり外したりできるように
+// v0.4：見つからなければ巣へ戻る（空荷の帰還）。探索が長引いたら巣の近くの目印で位置を直す。庭の端は見えない壁ではなく、なだらかに引き返す
+// v0.3：帰り道を経路積分（誤差がたまる）＋においの道＋巣の近くの探索に。砂糖の取り除き
+// v0.2：砂糖を粒ごとに持つ（蟻は近くの粒まで歩いて咥える）。巣の入口を実物に近い大きさに
+// 二本の橋：Goss, Aron, Deneubourg & Pasteels (1989) の二枝モデル。
+//   分岐点 j で短い枝を選ぶ確率 P = (20+Sj)² / ((20+Sj)² + (20+Lj)²)。Sj, Lj は j 側の端にある短・長枝の目印の量。
+//   短い枝は 20 秒、長い枝は 20r 秒で反対の端に着く。枝に入るとき入口側に、着いたとき出口側に目印を1つ置く（往復とも）。蒸発なし。
+// 庭（拡張）：同じ選択関数の形 (k+c)² を、前方3方向の嗅ぎ分けに使う。においは格子上で蒸発する。帰りは巣の方向（経路積分）へ。
+const ARI_ENGINE_VERSION = '0.5';
+
+function rng32(seed) { let s = (seed >>> 0) || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
+function gossChoice(S, L, k = 20, n = 2) { const a = Math.pow(k + S, n), b = Math.pow(k + L, n); return a / (a + b); }
+
+// ================= 二本の橋 =================
+// 区間：0 = 巣→分岐A（幹）、1 = 短い枝、2 = 長い枝、3 = 分岐B→餌（幹）
+function createBridge(o) {
+  const r = o.r ?? 2;
+  const b = {
+    r, tShort: 20, tLong: 20 * r, tStem: o.tStem ?? 7, flux: o.flux ?? 0.6, maxAnts: o.maxAnts ?? 400,
+    rnd: rng32(o.seed ?? 1), t: 0, next: 0,
+    // 目印：end 0 = 巣側の分岐 A、end 1 = 餌側の分岐 B。[短, 長]
+    mark: [[0, 0], [0, 0]], pending: [],
+    ants: [], nextId: 1, choices: [], crossings: [0, 0],
+  };
+  return b;
+}
+function bridgeDur(b, seg) { return seg === 1 ? b.tShort : seg === 2 ? b.tLong : b.tStem; }
+function bridgeChoose(b, end, ant) {
+  const S = b.mark[end][0], L = b.mark[end][1];
+  const p = gossChoice(S, L);
+  const br = b.rnd() < p ? 1 : 2;
+  b.mark[end][br - 1] += 1;                                       // 入口側に目印
+  b.pending.push({ t: b.t + bridgeDur(b, br), end: 1 - end, br });  // 着いたときに出口側へ目印
+  b.choices.push({ t: b.t, end, br, p });
+  ant.seg = br; ant.s = 0; ant.dur = bridgeDur(b, br);
+}
+function stepBridge(b, dt) {
+  b.t += dt;
+  // 巣から一定の流れで出る
+  while (b.t >= b.next && b.ants.length < b.maxAnts) {
+    b.ants.push({ id: b.nextId++, seg: 0, dir: 1, s: 0, dur: b.tStem, lane: b.rnd() * 2 - 1, carry: false });
+    b.next += 1 / b.flux;
+  }
+  for (const p of b.pending) if (p.t <= b.t && !p.done) { b.mark[p.end][p.br - 1] += 1; p.done = true; }
+  if (b.pending.length > 200) b.pending = b.pending.filter((p) => !p.done);
+  const keep = [];
+  for (const a of b.ants) {
+    a.s += dt;
+    if (a.s < a.dur) { keep.push(a); continue; }
+    const over = a.s - a.dur;
+    if (a.dir === 1) {
+      if (a.seg === 0) { bridgeChoose(b, 0, a); }
+      else if (a.seg === 1 || a.seg === 2) { b.crossings[a.seg - 1]++; a.seg = 3; a.dur = b.tStem; a.s = 0; }
+      else { a.dir = -1; a.carry = true; a.s = 0; a.dur = b.tStem; }            // 餌で向きを変える
+    } else {
+      if (a.seg === 3) { bridgeChoose(b, 1, a); }
+      else if (a.seg === 1 || a.seg === 2) { b.crossings[a.seg - 1]++; a.seg = 0; a.dur = b.tStem; a.s = 0; }
+      else { continue; }                                                          // 巣に戻った
+    }
+    a.s = Math.min(over, a.dur * 0.5);
+    keep.push(a);
+  }
+  b.ants = keep;
+}
+// 期間 [t0, t1) の分岐の選択のうち、短い枝を選んだ割合
+function shortShare(b, t0, t1) {
+  let n = 0, s = 0;
+  for (const c of b.choices) if (c.t >= t0 && c.t < t1) { n++; if (c.br === 1) s++; }
+  return n ? s / n : NaN;
+}
+function runBridgeTrial(r, seed, T = 900, win = [600, 900]) {
+  const b = createBridge({ r, seed });
+  const dt = 0.25;
+  for (let t = 0; t < T; t += dt) stepBridge(b, dt);
+  return shortShare(b, win[0], win[1]);
+}
+
+// ================= 庭（拡張） =================
+function createGarden(o) {
+  const W = o.W, H = o.H, cell = o.cell ?? 0.5;
+  const gx = Math.ceil(W / cell), gy = Math.ceil(H / cell);
+  const g = {
+    W, H, cell, gx, gy, F: new Float32Array(gx * gy), rnd: rng32(o.seed ?? 7), t: 0,
+    nest: o.nest ?? { x: W * 0.5, y: H * 0.2, r: 0.35 },
+    stones: o.stones ?? [], twigs: [], foods: [], nextObs: 1,
+    v: o.v ?? 1.6, sensD: 1.1, sensA: 0.62, k: o.k ?? 0.3, wig: 0.9, deposit: o.deposit ?? 2.5,
+    halfLife: o.halfLife ?? 150, smell: 2.6,
+    piErr: o.piErr ?? 0.12, nestSmell: 1.6, returns: [], giveUp: o.giveUp ?? [70, 150], edge: o.edge ?? 6,
+    ants: [], maxAnts: o.maxAnts ?? 120, exitQ: 6, exitRate: o.exitRate ?? 0.6, exitAcc: 0, nextId: 1,
+    delivered: 0, events: [],
+  };
+  return g;
+}
+// 砂糖の山：粒（直径約 0.8 mm）を山形に積む。粒ごとに位置と高さを持つ
+function addFood(g, x, y, amount) {
+  const id = g.foods.length ? g.foods[g.foods.length - 1].id + 1 : 1, r = rng32(id * 7919 + amount);
+  const R = 0.05 * Math.sqrt(amount), grains = [];
+  for (let i = 0; i < amount; i++) {
+    const rr = R * Math.sqrt(r()), a = r() * Math.PI * 2;
+    grains.push({ x: x + Math.cos(a) * rr, y: y + Math.sin(a) * rr, h: (1 - rr / R) * R * 0.55 * (0.7 + 0.3 * r()), rot: r() * 6.28, s: 0.8 + r() * 0.45 });
+  }
+  grains.sort((p, q) => p.h - q.h);
+  g.foods.push({ x, y, r: R, amount, taken: 0, id, grains });
+}
+function removeFood(g, id) { const f = g.foods.find((q) => q.id === id); if (!f) return false; f.grains.length = 0; f.amount = 0; f.r = 0; f.removed = true; return true; }
+function foodExtent(f) { let m = 0; for (const q of f.grains) m = Math.max(m, Math.hypot(q.x - f.x, q.y - f.y)); return m + 0.05; }
+function cellIdx(g, x, y) { const i = Math.floor(x / g.cell), j = Math.floor(y / g.cell); return i < 0 || j < 0 || i >= g.gx || j >= g.gy ? -1 : i + j * g.gx; }
+function smellAt(g, x, y) { const c = cellIdx(g, x, y); return c < 0 ? 0 : g.F[c]; }
+function inStone(g, x, y, pad = 0.15) { for (const s of g.stones) { const dx = x - s.x, dy = y - s.y; if (dx * dx + dy * dy < (s.r + pad) * (s.r + pad)) return s; } return null; }
+// 障害物（石＝円、小枝＝太さのある線分）に入っていれば、いちばん近い表面の点と外向きの向きを返す
+function hitObstacle(g, x, y, pad = 0.15) {
+  for (const s of g.stones) { const dx = x - s.x, dy = y - s.y, d = Math.hypot(dx, dy); if (d < s.r + pad) return { o: s, cx: s.x, cy: s.y, r: s.r, nx: d > 1e-9 ? dx / d : 1, ny: d > 1e-9 ? dy / d : 0 }; }
+  for (const w of g.twigs) {
+    const ax = w.x2 - w.x1, ay = w.y2 - w.y1, L2 = ax * ax + ay * ay || 1e-9;
+    const t = Math.max(0, Math.min(1, ((x - w.x1) * ax + (y - w.y1) * ay) / L2)), cx = w.x1 + ax * t, cy = w.y1 + ay * t;
+    const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+    if (d < w.r + pad) return { o: w, cx, cy, r: w.r, nx: d > 1e-9 ? dx / d : -ay / Math.sqrt(L2), ny: d > 1e-9 ? dy / d : ax / Math.sqrt(L2) };
+  }
+  return null;
+}
+function addStone(g, x, y, r) { const s = { id: g.nextObs++, kind: 'stone', x, y, r }; g.stones.push(s); clearSmellUnder(g, s); return s; }
+function addTwig(g, x1, y1, x2, y2, r = 0.28) { const w = { id: g.nextObs++, kind: 'twig', x1, y1, x2, y2, r }; g.twigs.push(w); clearSmellUnder(g, w); return w; }
+function removeObstacle(g, id) { const a = g.stones.length + g.twigs.length; g.stones = g.stones.filter((s) => s.id !== id); g.twigs = g.twigs.filter((w) => w.id !== id); return g.stones.length + g.twigs.length < a; }
+function clearSmellUnder(g, o) {
+  for (let j = 0; j < g.gy; j++) for (let i = 0; i < g.gx; i++) {
+    const x = (i + 0.5) * g.cell, y = (j + 0.5) * g.cell;
+    const save = [g.stones, g.twigs]; g.stones = o.kind === 'stone' ? [o] : []; g.twigs = o.kind === 'twig' ? [o] : [];
+    const h = hitObstacle(g, x, y, 0); [g.stones, g.twigs] = save;
+    if (h) g.F[i + j * g.gx] = 0;
+  }
+}
+function eraseSmell(g, x, y, r) {
+  const R = Math.ceil(r / g.cell);
+  const ci = Math.floor(x / g.cell), cj = Math.floor(y / g.cell);
+  for (let j = cj - R; j <= cj + R; j++) for (let i = ci - R; i <= ci + R; i++) {
+    if (i < 0 || j < 0 || i >= g.gx || j >= g.gy) continue;
+    if (Math.hypot((i + 0.5) * g.cell - x, (j + 0.5) * g.cell - y) <= r) g.F[i + j * g.gx] = 0;
+  }
+}
+function gauss(rnd) { let u = 0, v = 0; while (u === 0) u = rnd(); v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+function stepGarden(g, dt) {
+  g.t += dt;
+  const rnd = g.rnd;
+  // 蒸発
+  const ev = Math.pow(0.5, dt / g.halfLife);
+  for (let c = 0; c < g.F.length; c++) g.F[c] *= ev;
+  // 巣から出る（基本の流れ＋帰ってきた仲間に呼ばれた分）
+  g.exitAcc += dt * g.exitRate;
+  while ((g.exitAcc >= 1 || g.exitQ > 0) && g.ants.length < g.maxAnts) {
+    if (g.exitQ > 0) g.exitQ--; else g.exitAcc -= 1;
+    const th = rnd() * Math.PI * 2;
+    g.ants.push({ id: g.nextId++, x: g.nest.x + Math.cos(th) * g.nest.r, y: g.nest.y + Math.sin(th) * g.nest.r, th, st: 1, food: 0, dist: 0, dec: 0, tgt: th, home: 0, ex: 0, ey: 0, mw: 0, search: false, rlen: 0, rx0: 0, ry0: 0, out: 0, limit: g.giveUp[0] + rnd() * (g.giveUp[1] - g.giveUp[0]), empty: false });
+    if (g.exitQ === 0 && g.exitAcc < 1) break;
+  }
+  const keep = [];
+  for (const a of g.ants) {
+    if (a.st === 1) {
+      // 長く探しても見つからなければ、空荷で巣へ戻る（においは残さない）
+      a.out += dt;
+      if (a.out > a.limit && smellAt(g, a.x, a.y) < 0.05) { a.st = 2; a.empty = true; a.search = false; a.rlen = 0; a.rx0 = a.x; a.ry0 = a.y; a.dec = 0; }
+    }
+    if (a.st === 1) {
+      // 近くの砂糖のにおいに引かれる
+      let near = null, nd = g.smell;
+      for (const f of g.foods) { if (f.amount <= 0) continue; const d = Math.hypot(f.x - a.x, f.y - a.y) - f.r; if (d < nd) { nd = d; near = f; } }
+      if (near) {
+        // いちばん近い粒へ向かい、頭が届いたら（約 0.3 cm）その粒を咥える
+        const hx = a.x + Math.cos(a.th) * 0.3, hy = a.y + Math.sin(a.th) * 0.3;
+        let gi = -1, gd = 1e9;
+        for (let i = 0; i < near.grains.length; i++) { const q = near.grains[i], d = (q.x - hx) * (q.x - hx) + (q.y - hy) * (q.y - hy); if (d < gd) { gd = d; gi = i; } }
+        const q = near.grains[gi];
+        a.tgt = Math.atan2(q.y - a.y, q.x - a.x);
+        if (Math.sqrt(gd) <= 0.12) {
+          near.grains.splice(gi, 1); near.amount = near.grains.length; near.taken++; near.r = near.amount ? foodExtent(near) : 0;
+          a.st = 2; a.food = near.id; a.th += Math.PI; a.tgt = a.th; a.home = 0; a.search = false; a.rlen = 0; a.rx0 = a.x; a.ry0 = a.y; a.dec = 0;
+        }
+      } else {
+        a.dec -= dt;
+        if (a.dec <= 0) {
+          a.dec = 0.18;
+          const c = [-1, 0, 1].map((s) => smellAt(g, a.x + Math.cos(a.th + s * g.sensA) * g.sensD, a.y + Math.sin(a.th + s * g.sensA) * g.sensD));
+          if (c[0] + c[1] + c[2] > 0.02) {
+            const w = c.map((v) => Math.pow(g.k + v, 2)), sw = w[0] + w[1] + w[2];
+            const u = rnd() * sw, s = u < w[0] ? -1 : u < w[0] + w[1] ? 0 : 1;
+            a.tgt = a.th + s * g.sensA * 0.8;
+          } else a.tgt = a.th + gauss(rnd) * g.wig * Math.sqrt(a.dec * 2);
+        }
+      }
+    } else {
+      // 帰り：覚えている巣の位置（経路積分。歩いた距離に応じて誤差がたまる）へ向かう。
+      // 巣の方向に合うにおいの道があればそれをたどる。覚えた位置に着いても巣がなければ、その付近を探す。巣の近くでは巣のにおいで入る
+      a.home += dt;
+      const c = cellIdx(g, a.x, a.y);
+      if (c >= 0 && !a.empty) g.F[c] += g.deposit * dt;
+      const dTrue = Math.hypot(g.nest.x - a.x, g.nest.y - a.y);
+      if (dTrue < g.nest.r + 0.15) {                                              // 巣に入る（砂糖を運んだ蟻は仲間を呼ぶ）
+        if (a.empty) { g.emptyReturns = (g.emptyReturns || 0) + 1; continue; }
+        g.delivered++; g.exitQ += 1;
+        const straight = Math.hypot(a.rx0 - g.nest.x, a.ry0 - g.nest.y) / Math.max(a.rlen, 1e-6);
+        g.returns.push(Math.min(1, straight)); if (g.returns.length > 300) g.returns.shift();
+        continue;
+      }
+      a.mw += -a.mw * 0.6 * dt + gauss(rnd) * 0.55 * Math.sqrt(dt);            // ゆるい揺らぎ（向きのずれ）
+      const ex = g.nest.x + a.ex, ey = g.nest.y + a.ey, dEst = Math.hypot(ex - a.x, ey - a.y);
+      const hd = Math.atan2(ey - a.y, ex - a.x);
+      if (dTrue < g.nestSmell) { a.tgt = Math.atan2(g.nest.y - a.y, g.nest.x - a.x); }
+      else {
+        if (!a.search && dEst < 0.6) { a.search = true; a.scx = a.x; a.scy = a.y; a.st0 = g.t; }
+        // 探索が長引いたら、巣のまわりの目印で覚えた位置を少しずつ直す
+        if (a.search && g.t - a.st0 > 12) { const k = Math.min(1, dt * 0.25); a.ex *= 1 - k; a.ey *= 1 - k; a.scx += (g.nest.x - a.scx) * k; a.scy += (g.nest.y - a.scy) * k; }
+        a.dec -= dt;
+        if (a.dec <= 0) {
+          a.dec = 0.22;
+          const cs = [-1, 0, 1].map((s) => { const th = a.th + s * g.sensA; return { s, th, c: smellAt(g, a.x + Math.cos(th) * g.sensD, a.y + Math.sin(th) * g.sensD) }; });
+          const ok = cs.filter((q) => Math.cos(q.th - hd) > 0.2);
+          const sum = ok.reduce((t, q) => t + q.c, 0);
+          if (a.search) {
+            // 覚えた位置のまわりを、輪を少しずつ広げながら探す（系統的な探索）
+            const ts = g.t - a.st0, Rg = 0.5 + 0.35 * ts, dx = a.x - a.scx, dy = a.y - a.scy, dc = Math.hypot(dx, dy);
+            const tang = Math.atan2(dy, dx) + Math.PI / 2;
+            a.tgt = tang - Math.max(-1, Math.min(1, (Rg - dc) * 0.8)) * 0.9 + (rnd() - 0.5) * 0.6;
+          } else if (sum > 0.05) {
+            const w = ok.map((q) => Math.pow(g.k + q.c, 2) * (a.search ? 1 : 0.6 + 0.4 * Math.cos(q.th - hd))), sw = w.reduce((t, v) => t + v, 0);
+            let u = rnd() * sw, pick = ok[ok.length - 1]; for (let i = 0; i < ok.length; i++) { if (u < w[i]) { pick = ok[i]; break; } u -= w[i]; }
+            a.tgt = a.th + pick.s * g.sensA * 0.8;
+          } else a.tgt = hd + a.mw;
+        }
+      }
+    }
+    // 向きを目標へ（最大の曲がり速さあり）
+    let d = a.tgt - a.th; d = Math.atan2(Math.sin(d), Math.cos(d));
+    const mx = 5 * dt; a.th += Math.max(-mx, Math.min(mx, d)) + gauss(rnd) * 0.35 * Math.sqrt(dt);
+    let nx = a.x + Math.cos(a.th) * g.v * dt, ny = a.y + Math.sin(a.th) * g.v * dt;
+    // 石・小枝：ぶつかったら表面に沿って曲がる（置かれた障害物の中にいたら外へ出る）
+    const h = hitObstacle(g, nx, ny);
+    if (h) {
+      const ang = Math.atan2(h.ny, h.nx);
+      const side = Math.sin(a.th - ang) > 0 ? 1 : -1;
+      a.th = ang + side * Math.PI / 2;
+      nx = a.x + Math.cos(a.th) * g.v * dt; ny = a.y + Math.sin(a.th) * g.v * dt;
+      const h2 = hitObstacle(g, nx, ny);
+      if (h2) { nx = h2.cx + h2.nx * (h2.r + 0.2); ny = h2.cy + h2.ny * (h2.r + 0.2); }
+      a.tgt = a.th;
+    }
+    // 庭の端：見えない壁ではなく、端に近づくほど内側へ向きを変える（最後の手段として外へは出さない）
+    const m = g.edge, inx = nx < m ? (m - nx) / m : nx > g.W - m ? -(nx - (g.W - m)) / m : 0, iny = ny < m ? (m - ny) / m : ny > g.H - m ? -(ny - (g.H - m)) / m : 0;
+    if (inx || iny) { const want = Math.atan2(iny, inx); let dd = want - a.th; dd = Math.atan2(Math.sin(dd), Math.cos(dd)); a.th += dd * Math.min(1, Math.hypot(inx, iny) * 4 * dt); a.tgt = a.th; }
+    nx = Math.max(0.3, Math.min(g.W - 0.3, nx)); ny = Math.max(0.3, Math.min(g.H - 0.3, ny));
+    const ds = Math.hypot(nx - a.x, ny - a.y);
+    a.dist += ds; a.x = nx; a.y = ny;
+    const sq = g.piErr * Math.sqrt(ds); a.ex += gauss(rnd) * sq; a.ey += gauss(rnd) * sq;
+    if (a.st === 2) a.rlen += ds;
+    keep.push(a);
+  }
+  g.ants = keep;
+  for (const f of g.foods) if (f.amount <= 0 && !f.gone) { f.gone = true; g.events.push({ t: g.t, type: 'empty', id: f.id }); }
+}
+
+// ================= 検証試験 =================
+function wilson(x, n) { const z = 1.96, p = x / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d; return [Math.max(0, c - h), Math.min(1, c + h)]; }
+function runAriTests(nTrials = 60) {
+  const out = [];
+  const add = (id, name, pass, detail) => out.push({ id, name, status: pass ? 'pass' : 'fail', detail });
+  try {
+    const p0 = gossChoice(0, 0), p1 = gossChoice(10, 0), p2 = gossChoice(0, 30);
+    add('A1', '選択関数（k=20, n=2）', Math.abs(p0 - 0.5) < 1e-15 && Math.abs(p1 - 900 / 1300) < 1e-15 && Math.abs(p2 - 400 / 2900) < 1e-15,
+      `P(0,0)=${p0}、P(10,0)=${p1.toFixed(4)}（900/1300）、P(0,30)=${p2.toFixed(4)}（400/2900）`);
+  } catch (e) { add('A1', '選択関数', false, String(e)); }
+  const trials = (r) => { const v = []; for (let s = 1; s <= nTrials; s++) v.push(runBridgeTrial(r, s)); return v; };
+  try {
+    const v = trials(1), dom = v.filter((x) => x > 0.5).length, strong = v.filter((x) => Math.abs(x - 0.5) > 0.3).length;
+    const [lo, hi] = wilson(dom, v.length);
+    add('A2', 'r=1：どちらか一方にそろう（対称）', lo < 0.5 && hi > 0.5 && strong / v.length > 0.6,
+      `${v.length}試行。「上の枝」が多数派 ${dom}回（95%区間 ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%）、一方が80%を超えた試行 ${strong}回`);
+  } catch (e) { add('A2', 'r=1', false, String(e)); }
+  try {
+    const v = trials(2), dom = v.filter((x) => x > 0.5).length;
+    const med = v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)];
+    const [lo, hi] = wilson(dom, v.length);
+    add('A3', 'r=2：短い枝が選ばれやすい', lo > 0.5, `${v.length}試行中 ${dom}回で短い枝が多数派（95%区間 ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%）、短い枝の割合の中央値 ${(med * 100).toFixed(0)}%（600〜900秒の選択、流入 0.6匹/秒）。原著 図2 との比較は未実施`);
+  } catch (e) { add('A3', 'r=2', false, String(e)); }
+  try {
+    const a = runBridgeTrial(1.4, 5), b = runBridgeTrial(1.4, 5);
+    add('A4', '同じseedで同じ結果', a === b, `短い枝の割合 ${a.toFixed(6)} と ${b.toFixed(6)}`);
+  } catch (e) { add('A4', '再現性', false, String(e)); }
+  try {
+    const g = createGarden({ W: 40, H: 60, seed: 3, stones: [{ x: 20, y: 30, r: 3 }] });
+    addFood(g, 20, 48, 80);
+    let inside = 0;
+    for (let t = 0; t < 240; t += 1 / 30) { stepGarden(g, 1 / 30); for (const a of g.ants) if (hitObstacle(g, a.x, a.y, -0.05)) inside++; }
+    add('G1', '庭：砂糖が巣へ運ばれ、石や小枝には入らない', g.delivered >= 1 && inside === 0, `4分で ${g.delivered} 粒を巣へ、石・小枝の中にいた回数 ${inside}`);
+    let nearEdge = 0; for (const a of g.ants) if (a.x < 1 || a.y < 1 || a.x > g.W - 1 || a.y > g.H - 1) nearEdge++;
+    add('G3', '庭：端に張りつく蟻がいない', nearEdge <= 1, `4分後、端から1cm以内にいる蟻 ${nearEdge} 匹／${g.ants.length} 匹、空荷で巣に戻った回数 ${g.emptyReturns || 0}`);
+    const st = g.returns.slice(0, 20), mean = st.reduce((s, v) => s + v, 0) / (st.length || 1);
+    add('G2', '庭：帰り道は真っすぐすぎない', st.length >= 5 && mean > 0.5 && mean < 0.97, `最初の ${st.length} 匹の帰り道の直線度（巣までの距離÷歩いた距離）の平均 ${mean.toFixed(2)}`);
+  } catch (e) { add('G1', '庭', false, String(e)); }
+  try {
+    // 行列ができてから、行列を横切る小枝を置く → まわり道で運び続ける
+    const g = createGarden({ W: 120, H: 120, seed: 11, nest: { x: 60, y: 50, r: 0.35 }, maxAnts: 150 });
+    addFood(g, 60, 66, 600);
+    for (let t = 0; t < 180; t += 1 / 30) stepGarden(g, 1 / 30);
+    const d0 = g.delivered;
+    addTwig(g, 54, 58, 66, 58, 0.3);
+    let inside = 0;
+    for (let t = 0; t < 180; t += 1 / 30) { stepGarden(g, 1 / 30); for (const a of g.ants) if (hitObstacle(g, a.x, a.y, -0.05)) inside++; }
+    const d1 = g.delivered - d0;
+    add('G4', '庭：行列を横切る小枝を置くと、まわり道で運び続ける', d1 > 20 && inside === 0, `小枝を置く前の3分で ${d0} 粒、置いた後の3分で ${d1} 粒、小枝の中にいた回数 ${inside}`);
+  } catch (e) { add('G4', '小枝', false, String(e)); }
+
+  return out;
+}
+
+if (typeof module !== 'undefined') module.exports = { hitObstacle, addStone, addTwig, removeObstacle, removeFood, ARI_ENGINE_VERSION, rng32, gossChoice, createBridge, stepBridge, shortShare, runBridgeTrial, createGarden, addFood, stepGarden, eraseSmell, inStone, smellAt, runAriTests, wilson };
+// ===== ENGINE END =====
+
+</script>
+<script>
+(() => {
+'use strict';
+const $ = (s) => document.querySelector(s);
+if (!window.THREE) { const d = document.createElement('div'); d.className = 'fatal'; d.textContent = '3D表示の読み込みに失敗しました。通信状況を確かめて、ページを開き直してください。'; document.body.appendChild(d); return; }
+
+const opt = { scene: 'garden', smell: false, speed: 1, n: 120, r: 2 };
+try { Object.assign(opt, JSON.parse(localStorage.getItem('ari.opt') || '{}')); } catch (e) {}
+if (opt.scene !== 'garden' && opt.scene !== 'bridge') opt.scene = 'garden';
+function saveOpt() { try { localStorage.setItem('ari.opt', JSON.stringify(opt)); } catch (e) {} }
+const narrow = Math.min(innerWidth, innerHeight) < 700;
+const portrait = () => innerWidth < innerHeight;
+
+// ---------------- three.js ----------------
+const canvas = $('#scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.setClearColor(0x4a3a2a, 1);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x4a3a2a, 110, 320);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 400);
+const hemi = new THREE.HemisphereLight(0xfff3df, 0x3a2a1c, 0.55); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff0d8, 1.25);
+sun.position.set(-30, 60, 25); sun.castShadow = true;
+sun.shadow.mapSize.set(narrow ? 1024 : 2048, narrow ? 1024 : 2048);
+sun.shadow.camera.left = -45; sun.shadow.camera.right = 45; sun.shadow.camera.top = 45; sun.shadow.camera.bottom = -45;
+sun.shadow.camera.near = 10; sun.shadow.camera.far = 150; sun.shadow.bias = -0.0008; sun.shadow.radius = 3;
+scene.add(sun); scene.add(sun.target);
+
+// 乱数（表示用）
+const R = rng32(20261103);
+
+// ---------------- 地面（土） ----------------
+function soilTexture(seed) {
+  // 継ぎ目のない土の模様（1枚で約 22 cm 四方）を敷き詰める
+  const N = narrow ? 1024 : 2048, cv = document.createElement('canvas'); cv.width = cv.height = N;
+  const c = cv.getContext('2d'), r = rng32(seed);
+  const wrap = (x, y, s, fn) => { for (const ox of [-N, 0, N]) for (const oy of [-N, 0, N]) if (x + ox > -s && x + ox < N + s && y + oy > -s && y + oy < N + s) fn(x + ox, y + oy); };
+  c.fillStyle = '#7a654c'; c.fillRect(0, 0, N, N);
+  for (let i = 0; i < 160; i++) {
+    const x = r() * N, y = r() * N, s = N * (0.03 + r() * 0.12), dark = r() < 0.55;
+    wrap(x, y, s, (X, Y) => { const g = c.createRadialGradient(X, Y, 0, X, Y, s); g.addColorStop(0, dark ? 'rgba(52,38,25,0.28)' : 'rgba(150,128,98,0.18)'); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.fillRect(X - s, Y - s, s * 2, s * 2); });
+  }
+  const img = c.getImageData(0, 0, N, N), d = img.data;
+  for (let k = 0; k < d.length; k += 4) { const n = (r() - 0.5) * 38; d[k] += n; d[k + 1] += n * 0.9; d[k + 2] += n * 0.75; }
+  c.putImageData(img, 0, 0);
+  const grain = (x, y, s, tone, warm) => wrap(x, y, s * 2, (X, Y) => {
+    c.fillStyle = `rgb(${tone + warm},${tone + warm * 0.55},${tone - 8})`;
+    c.beginPath(); c.ellipse(X, Y, s, s * 0.75, (X * 7 + Y) % 3, 0, Math.PI * 2); c.fill();
+    c.fillStyle = 'rgba(255,246,230,0.14)'; c.beginPath(); c.ellipse(X - s * 0.3, Y - s * 0.3, s * 0.45, s * 0.28, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = 'rgba(25,15,8,0.32)'; c.beginPath(); c.ellipse(X + s * 0.3, Y + s * 0.42, s * 0.85, s * 0.35, 0, 0, Math.PI * 2); c.fill();
+  });
+  for (let i = 0; i < 5200; i++) grain(r() * N, r() * N, N * (0.0012 + Math.pow(r(), 2.5) * 0.004), 70 + r() * 60, r() * 30);   // 砂粒
+  for (let i = 0; i < 70; i++) grain(r() * N, r() * N, N * (0.008 + r() * 0.012), 60 + r() * 50, r() * 25);                     // 小石
+  for (let i = 0; i < 26; i++) {
+    const x = r() * N, y = r() * N, L = N * (0.03 + r() * 0.07), a = r() * Math.PI, col = r() < 0.5 ? 'rgba(150,118,70,0.5)' : 'rgba(75,55,32,0.55)';
+    wrap(x, y, L, (X, Y) => { c.strokeStyle = col; c.lineWidth = N * 0.0016; c.beginPath(); c.moveTo(X, Y); c.quadraticCurveTo(X + Math.cos(a) * L * 0.5 + L * 0.08, Y + Math.sin(a) * L * 0.5, X + Math.cos(a) * L, Y + Math.sin(a) * L); c.stroke(); });
+  }
+  const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 8;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+const soilTex = soilTexture(11);
+const groundMat = new THREE.MeshStandardMaterial({ map: soilTex, bumpMap: soilTex, bumpScale: 0.05, roughness: 0.96, metalness: 0 });
+const groundGeo = new THREE.PlaneGeometry(420, 420, 120, 120);
+{ // 大きな濃淡（湿り気・日陰）を頂点の色で
+  const p = groundGeo.attributes.position, col = new Float32Array(p.count * 3), nr = rng32(77);
+  const k = [nr() * 9, nr() * 9, nr() * 9, nr() * 9];
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i); const v = 0.86 + 0.1 * Math.sin(x * 0.09 + k[0]) * Math.sin(y * 0.07 + k[1]) + 0.07 * Math.sin(x * 0.23 + y * 0.17 + k[2]) + 0.04 * Math.sin(x * 0.5 - y * 0.41 + k[3]); col.set([v, v * 0.98, v * 0.95], i * 3); }
+  groundGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+}
+groundMat.vertexColors = true;
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+soilTex.repeat.set(19, 19);
+scene.add(ground);
+// においの層
+let smellTex = null, smellBytes = null;
+const smellMat = new THREE.MeshBasicMaterial({ color: 0x8fe0c4, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending });
+const smellMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), smellMat);
+smellMesh.rotation.x = -Math.PI / 2; smellMesh.position.y = 0.03; smellMesh.renderOrder = 2; scene.add(smellMesh);
+
+// ---------------- 蟻のかたち ----------------
+// 前は +X、上は +Y。長さ約 0.75 cm。脚は 6 本（L1,R1,L2,R2,L3,R3）、触角 2 本
+function antGeometry() {
+  const parts = [];
+  const add = (geo, m, leg, hip) => {
+    geo = geo.toNonIndexed(); geo.applyMatrix4(m);
+    const n = geo.attributes.position.count;
+    geo.setAttribute('aLeg', new THREE.BufferAttribute(new Float32Array(n).fill(leg), 1));
+    const h = new Float32Array(n * 3); for (let i = 0; i < n; i++) h.set(hip, i * 3);
+    geo.setAttribute('aHip', new THREE.BufferAttribute(h, 3));
+    parts.push(geo);
+  };
+  const M = (x, y, z, sx, sy, sz, ry = 0, rz = 0, rx = 0) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
+  const sph = () => new THREE.SphereGeometry(1, 12, 9);
+  const H = 0.13;
+  add(sph(), M(-0.25, H + 0.04, 0, 0.17, 0.12, 0.13), -1, [0, 0, 0]);   // 腹
+  add(sph(), M(-0.075, H + 0.02, 0, 0.04, 0.045, 0.035), -1, [0, 0, 0]);  // 腹柄
+  add(sph(), M(0.04, H + 0.03, 0, 0.11, 0.055, 0.05, 0, -0.15), -1, [0, 0, 0]); // 胸
+  add(sph(), M(0.2, H + 0.035, 0, 0.075, 0.06, 0.07), -1, [0, 0, 0]);      // 頭
+  add(sph(), M(0.27, H + 0.015, 0.025, 0.03, 0.012, 0.012, 0.5), -1, [0, 0, 0]);   // 大あご
+  add(sph(), M(0.27, H + 0.015, -0.025, 0.03, 0.012, 0.012, -0.5), -1, [0, 0, 0]);
+  const cyl = () => new THREE.CylinderGeometry(1, 1, 1, 5, 1);
+  const seg = (a, b, r, leg, hip) => {
+    const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), d = B.clone().sub(A), L = d.length();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
+    const m = new THREE.Matrix4().compose(A.clone().add(B).multiplyScalar(0.5), q, new THREE.Vector3(r, L, r));
+    add(cyl(), m, leg, hip);
+  };
+  const legs = [[0.09, 0.32], [0.04, 0.0], [-0.01, -0.3]];   // 付け根の x、足先の向き
+  for (let p = 0; p < 3; p++) for (const s of [1, -1]) {
+    const leg = p * 2 + (s > 0 ? 0 : 1);
+    const hx = legs[p][0], hip = [hx, H + 0.01, s * 0.035];
+    const knee = [hx + legs[p][1] * 0.18, H + 0.09, s * 0.17];
+    const foot = [hx + legs[p][1] * 0.38, 0.0, s * 0.27];
+    seg(hip, knee, 0.012, leg, hip); seg(knee, foot, 0.009, leg, hip);
+  }
+  for (const s of [1, -1]) {
+    const base = [0.25, H + 0.07, s * 0.03], elbow = [0.31, H + 0.13, s * 0.07], tip = [0.42, H + 0.08, s * 0.12];
+    seg(base, elbow, 0.007, s > 0 ? 6 : 7, base); seg(elbow, tip, 0.006, s > 0 ? 6 : 7, base);
+  }
+  // 結合
+  const g = new THREE.BufferGeometry();
+  for (const name of ['position', 'normal', 'aLeg', 'aHip']) {
+    const size = parts[0].attributes[name].itemSize;
+    let total = 0; for (const p of parts) total += p.attributes[name].count;
+    const arr = new Float32Array(total * size); let o = 0;
+    for (const p of parts) { arr.set(p.attributes[name].array, o); o += p.attributes[name].array.length; }
+    g.setAttribute(name, new THREE.BufferAttribute(arr, size));
+  }
+  return g;
+}
+const MAXA = 260;
+const antGeo = antGeometry();
+const phaseAttr = new THREE.InstancedBufferAttribute(new Float32Array(MAXA), 1); phaseAttr.setUsage(THREE.DynamicDrawUsage);
+antGeo.setAttribute('aPhase', phaseAttr);
+const antMat = new THREE.MeshStandardMaterial({ color: 0x050302, roughness: 0.32, metalness: 0.08 });
+const timeU = { value: 0 };
+antMat.onBeforeCompile = (sh) => {
+  sh.uniforms.uTime = timeU;
+  sh.vertexShader = 'attribute float aLeg; attribute vec3 aHip; attribute float aPhase; uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `
+    vec3 transformed = vec3(position);
+    if (aLeg > -0.5 && aLeg < 5.5) {
+      float side = mod(aLeg, 2.0) < 0.5 ? 1.0 : -1.0;
+      float pair = floor(aLeg / 2.0);
+      float grp = mod(pair + (side > 0.0 ? 0.0 : 1.0), 2.0);       // 三脚歩行：L1・R2・L3 と R1・L2・R3
+      float ph = aPhase + grp * 3.14159;
+      float sw = sin(ph) * 0.42;
+      vec3 q = transformed - aHip;
+      float c = cos(sw), s = sin(sw);
+      q = vec3(c*q.x + s*q.z, q.y, -s*q.x + c*q.z);
+      float reach = clamp(length(q.xz) / 0.3, 0.0, 1.0);
+      q.y += max(0.0, cos(ph)) * 0.05 * reach;
+      transformed = aHip + q;
+    } else if (aLeg > 5.5) {
+      vec3 q = transformed - aHip;
+      float w = sin(uTime * 7.0 + aLeg * 2.0 + aPhase * 0.3) * 0.25;
+      float c = cos(w), s = sin(w);
+      q = vec3(c*q.x - s*q.y, s*q.x + c*q.y, q.z);
+      transformed = aHip + q;
+    }
+  `);
+};
+const ants = new THREE.InstancedMesh(antGeo, antMat, MAXA);
+ants.castShadow = true; ants.frustumCulled = false; ants.count = 0; scene.add(ants);
+const grainGeo = new THREE.BoxGeometry(0.085, 0.075, 0.085);
+const grainMat = new THREE.MeshStandardMaterial({ color: 0xfaf6ee, roughness: 0.35, metalness: 0, emissive: 0x222018 });
+const carried = new THREE.InstancedMesh(grainGeo, grainMat, MAXA); carried.castShadow = true; carried.count = 0; carried.frustumCulled = false; scene.add(carried);
+// 砂糖の山（粒）
+const pileGeo = new THREE.BoxGeometry(0.085, 0.075, 0.085);
+const piles = new THREE.InstancedMesh(pileGeo, grainMat, 3000); piles.castShadow = true; piles.receiveShadow = true; piles.count = 0; piles.frustumCulled = false; scene.add(piles);
+
+// ---------------- 地面の小物（巣・石・葉） ----------------
+const props = new THREE.Group(); scene.add(props);
+function nestMesh(x, z) {
+  const g = new THREE.Group();
+  const prof = []; for (let i = 0; i <= 16; i++) { const t = i / 16, rr = 0.33 + t * 1.6; prof.push(new THREE.Vector2(rr, 0.22 * Math.sin(Math.PI * Math.min(1, t * 1.3)) * (1 - t * 0.35))); }
+  const mound = new THREE.Mesh(new THREE.LatheGeometry(prof, 48), new THREE.MeshStandardMaterial({ color: 0xb8a58c, roughness: 1, map: soilTex }));
+  mound.receiveShadow = true; mound.castShadow = true; g.add(mound);
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(0.34, 32), new THREE.MeshBasicMaterial({ color: 0x050302 }));
+  hole.rotation.x = -Math.PI / 2; hole.position.y = 0.03; g.add(hole);
+  // まわりの掘り出した土の粒
+  const cg = new THREE.DodecahedronGeometry(0.05, 0), cm = new THREE.MeshStandardMaterial({ color: 0x3a2c1f, roughness: 1 });
+  const crumbs = new THREE.InstancedMesh(cg, cm, 220); const m = new THREE.Matrix4();
+  for (let i = 0; i < 220; i++) { const a = R() * 6.283, rr = 0.42 + Math.pow(R(), 0.8) * 1.7, s = 0.5 + R(); m.compose(new THREE.Vector3(Math.cos(a) * rr, 0.12 * (1 - rr / 2.2) + 0.03, Math.sin(a) * rr), new THREE.Quaternion().setFromEuler(new THREE.Euler(R() * 3, R() * 3, R() * 3)), new THREE.Vector3(s, s * 0.7, s)); crumbs.setMatrixAt(i, m); }
+  crumbs.castShadow = true; crumbs.receiveShadow = true; g.add(crumbs);
+  g.position.set(x, 0, z);
+  return g;
+}
+function stoneMesh(r, seed) {
+  const geo = new THREE.IcosahedronGeometry(1, 3), p = geo.attributes.position, rr = rng32(seed), v = new THREE.Vector3();
+  const k = [rr() * 6, rr() * 6, rr() * 6];
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = 1 + 0.12 * Math.sin(v.x * 2.3 + k[0]) * Math.sin(v.y * 2.1 + k[1]) + 0.07 * Math.sin(v.z * 5.1 + k[2]);
+    v.multiplyScalar(n); v.y = v.y * 0.55 + 0.2; p.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  const tone = 0.10 + rr() * 0.08;
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(tone, tone * 0.95, tone * 0.88), roughness: 0.85, metalness: 0.02 }));
+  m.scale.setScalar(r); m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+function leafMesh(seed) {
+  const rr = rng32(seed), s = new THREE.Shape();
+  s.moveTo(0, -1); s.bezierCurveTo(0.65, -0.55, 0.6, 0.55, 0, 1.15); s.bezierCurveTo(-0.6, 0.55, -0.65, -0.55, 0, -1);
+  const geo = new THREE.ShapeGeometry(s, 16);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i); p.setZ(i, 0.12 * (x * x) + 0.05 * Math.sin(y * 3)); }
+  geo.computeVertexNormals();
+  const hue = rr();
+  const col = hue < 0.5 ? new THREE.Color(0.16, 0.085, 0.03) : new THREE.Color(0.22, 0.14, 0.05);
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, roughness: 0.8, side: THREE.DoubleSide }));
+  m.rotation.x = -Math.PI / 2; m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+
+// ---------------- 場面 ----------------
+let G = null, B = null, W = 40, H = 60, scn = null, bridgeGeo = null, focus = [0, 0];
+const toWorld = (x, y) => [x - W / 2, -(y - H / 2)];
+function clearProps() { while (props.children.length) { const o = props.children.pop(); o.traverse((n) => { if (n.geometry) n.geometry.dispose(); }); } }
+function build() {
+  clearProps();
+  const P = portrait();
+  W = P ? 40 : 64; H = P ? 64 : 40;
+  scn = opt.scene;
+  story0 = { trail: false, aligned: false, emptied: new Set() };
+  if (scn === 'garden') {
+    B = null;
+    // 庭は 120cm 四方。見どころ（巣・石・砂糖）は真ん中の 40×64（横長は 64×40）に置く
+    const bw = W, bh = H; W = 120; H = 120; const ox = (W - bw) / 2, oy = (H - bh) / 2;
+    const nest = P ? { x: ox + bw * 0.5, y: oy + bh * 0.3, r: 0.35 } : { x: ox + bw * 0.36, y: oy + bh * 0.5, r: 0.35 };
+    const stones = [];
+    const sr = rng32(5);
+    const spots = P ? [[0.25, 0.55, 2.6], [0.72, 0.42, 1.8], [0.62, 0.78, 3.0], [0.18, 0.86, 1.6]] : [[0.5, 0.3, 2.6], [0.42, 0.72, 1.8], [0.76, 0.6, 3.0], [0.9, 0.2, 1.6]];
+    for (const [fx, fy, r] of spots) stones.push({ x: ox + fx * bw, y: oy + fy * bh, r });
+    for (let i = 0; i < 10; i++) { const x = 8 + sr() * (W - 16), y = 8 + sr() * (H - 16); if (Math.abs(x - W / 2) < bw / 2 + 4 && Math.abs(y - H / 2) < bh / 2 + 4) continue; stones.push({ x, y, r: 1.4 + sr() * 2.2 }); }
+    G = createGarden({ W, H, seed: (Date.now() & 0xffff) + 1, nest, stones, maxAnts: opt.n });
+    for (const s of G.stones) { s.id = G.nextObs++; s.kind = 'stone'; }
+    obsMeshes.clear();
+    const fx0 = ox + (P ? bw * 0.62 : bw * 0.58), fy0 = oy + (P ? bh * 0.52 : bh * 0.6);
+    addFood(G, fx0, fy0, 300);
+    focus = toWorld((nest.x + fx0) / 2, (nest.y + fy0) / 2);
+    const [nx, nz] = toWorld(nest.x, nest.y); props.add(nestMesh(nx, nz));
+    stones.forEach((s, i) => { const m = stoneMesh(s.r, 30 + i); const [x, z] = toWorld(s.x, s.y); m.position.set(x, 0, z); m.rotation.y = sr() * 6; props.add(m); obsMeshes.set(s.id, m); });
+    for (let i = 0; i < 16; i++) { const l = leafMesh(70 + i); const [x, z] = toWorld(sr() * W, sr() * H); l.position.set(x, 0.03, z); l.rotation.z = sr() * 6; l.scale.setScalar(1.1 + sr() * 0.9); props.add(l); }
+    // においの層
+    smellBytes = new Uint8Array(G.gx * G.gy);
+    smellTex = new THREE.DataTexture(smellBytes, G.gx, G.gy, THREE.LuminanceFormat, THREE.UnsignedByteType);
+    smellTex.magFilter = THREE.LinearFilter; smellTex.minFilter = THREE.LinearFilter; smellTex.needsUpdate = true;
+    smellMat.alphaMap = smellTex; smellMat.map = null; smellMat.needsUpdate = true;
+    smellMesh.scale.set(W, H, 1); smellMesh.position.set(0, 0.03, 0); smellMesh.visible = opt.smell;
+    smellTex.flipY = false;
+  } else {
+    G = null;
+    B = createBridge({ r: opt.r, seed: (Date.now() & 0xffff) + 1, flux: 0.6 });
+    focus = [0, 0];
+    buildBridge(P);
+    smellMesh.visible = false;
+  }
+  Object.assign(viewT, { yaw: 0, pitch: VIEW0().pitch, dist: VIEW0().dist });
+  modeLabels();
+  updateCount();
+}
+// 二本の橋のかたち（cm）。巣→A（幹）、A→B（短い枝・長い枝）、B→餌（幹）
+function buildBridge(P) {
+  const v = 22 / 20;                         // 歩く速さ cm/s（短い枝 22cm を 20 秒）
+  const stem = v * B.tStem;
+  const D = 19;                               // A と B の間の距離
+  const total = stem * 2 + D;
+  const ax = (u) => P ? [W / 2, H / 2 - total / 2 + u] : [W / 2 - total / 2 + u, H / 2];
+  const perp = P ? [1, 0] : [0, 1];
+  const A = ax(stem), Bp = ax(stem + D), N0 = ax(0), F0 = ax(total);
+  const bez = (h, n = 64) => { const pts = []; for (let i = 0; i <= n; i++) { const t = i / n, c = 2 * h; const mx = (A[0] + Bp[0]) / 2 + perp[0] * c, my = (A[1] + Bp[1]) / 2 + perp[1] * c; const x = (1 - t) * (1 - t) * A[0] + 2 * (1 - t) * t * mx + t * t * Bp[0], y = (1 - t) * (1 - t) * A[1] + 2 * (1 - t) * t * my + t * t * Bp[1]; pts.push([x, y]); } return pts; };
+  const len = (pts) => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return s; };
+  const solve = (L, sign) => { let lo = 0, hi = 40; for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (len(bez(m * sign)) < L) lo = m; else hi = m; } return bez(((lo + hi) / 2) * sign); };
+  const Ls = 22, side = 1;
+  const short = solve(Ls, -side), long = solve(Ls * B.r, side);
+  const paths = { 0: [N0, A], 1: short, 2: long, 3: [Bp, F0] };
+  bridgeGeo = { paths, cum: {}, lens: {}, A, B: Bp, N0, F0, P };
+  for (const k of [0, 1, 2, 3]) { const p = paths[k], c = [0]; for (let i = 1; i < p.length; i++) c.push(c[i - 1] + Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])); bridgeGeo.cum[k] = c; bridgeGeo.lens[k] = c[c.length - 1]; }
+  // 紙の帯
+  const paperTex = (() => { const cv = document.createElement('canvas'); cv.width = 256; cv.height = 32; const c = cv.getContext('2d'), r = rng32(9); c.fillStyle = '#d9c8a6'; c.fillRect(0, 0, 256, 32); for (let i = 0; i < 900; i++) { c.fillStyle = `rgba(${120 + r() * 60},${100 + r() * 40},${70 + r() * 30},${0.06 + r() * 0.08})`; c.fillRect(r() * 256, r() * 32, 1 + r() * 3, 1); } const t = new THREE.CanvasTexture(cv); t.encoding = THREE.sRGBEncoding; t.wrapS = THREE.RepeatWrapping; return t; })();
+  bridgeGeo.strips = {};
+  for (const k of [0, 1, 2, 3]) {
+    const p = paths[k], wdt = 1.3, hgt = 0.45;
+    const pos = [], uv = [], col = [], idx = [];
+    for (let i = 0; i < p.length; i++) {
+      const a = p[Math.max(0, i - 1)], b = p[Math.min(p.length - 1, i + 1)];
+      let tx = b[0] - a[0], ty = b[1] - a[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+      const nx = -ty, ny = tx;
+      for (const s of [-1, 1]) { const [X, Z] = toWorld(p[i][0] + nx * s * wdt / 2, p[i][1] + ny * s * wdt / 2); pos.push(X, hgt, Z); uv.push(bridgeGeo.cum[k][i] / 6, s > 0 ? 1 : 0); col.push(1, 1, 1); }
+      if (i > 0) { const q = (i - 1) * 2; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: paperTex, vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }));
+    m.castShadow = true; m.receiveShadow = true; props.add(m);
+    bridgeGeo.strips[k] = m;
+    // 支柱
+    for (const i of [0, Math.floor(p.length / 2), p.length - 1]) { const [X, Z] = toWorld(p[i][0], p[i][1]); const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.45, 6), new THREE.MeshStandardMaterial({ color: 0x8a7656, roughness: 0.9 })); post.position.set(X, 0.22, Z); post.castShadow = true; props.add(post); }
+  }
+  const [nx, nz] = toWorld(N0[0], N0[1]); const nest = nestMesh(nx, nz); props.add(nest);
+  // 餌場：小皿の砂糖
+  const [fx, fz] = toWorld(F0[0], F0[1]);
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 1.7, 0.35, 40), new THREE.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.35 }));
+  dish.position.set(fx, 0.17, fz); dish.castShadow = true; dish.receiveShadow = true; props.add(dish);
+  bridgeGeo.food = { x: F0[0], y: F0[1] };
+  const sr = rng32(41);
+  for (let i = 0; i < 4; i++) { const l = leafMesh(80 + i); const [x, z] = toWorld(sr() * W, sr() * H); l.position.set(x, 0.03, z); l.rotation.z = sr() * 6; l.scale.setScalar(1.1 + sr() * 0.9); props.add(l); }
+}
+function bridgePoint(seg, frac, lane) {
+  const p = bridgeGeo.paths[seg], c = bridgeGeo.cum[seg], L = bridgeGeo.lens[seg], s = Math.max(0, Math.min(1, frac)) * L;
+  let i = 1; while (i < c.length - 1 && c[i] < s) i++;
+  const t = (s - c[i - 1]) / ((c[i] - c[i - 1]) || 1);
+  const x = p[i - 1][0] + (p[i][0] - p[i - 1][0]) * t, y = p[i - 1][1] + (p[i][1] - p[i - 1][1]) * t;
+  const tx = p[i][0] - p[i - 1][0], ty = p[i][1] - p[i - 1][1], l = Math.hypot(tx, ty) || 1;
+  return { x: x - ty / l * lane, y: y + tx / l * lane, th: Math.atan2(ty, tx) };
+}
+
+// ---------------- カメラ ----------------
+const VIEW0 = () => ({ pitch: 1.05, dist: scn === 'bridge' ? (portrait() ? 64 : 50) : (portrait() ? 34 : 27) });
+const view = { yaw: 0, pitch: 1.0, dist: 80 }, viewT = { yaw: 0, pitch: 1.0, dist: 80 };
+let lastInput = -99, nowS = 0; const tgt = { x: 0, z: 0 };
+function applyCamera(dt) {
+  const k = 1 - Math.exp(-dt * 6);
+  view.yaw += (viewT.yaw - view.yaw) * k; view.pitch += (viewT.pitch - view.pitch) * k; view.dist += (viewT.dist - view.dist) * k;
+  const cp = Math.cos(view.pitch);
+  tgt.x += (focus[0] - tgt.x) * k; tgt.z += (focus[1] - tgt.z) * k;
+  camera.position.set(tgt.x + view.dist * cp * Math.sin(view.yaw), view.dist * Math.sin(view.pitch), tgt.z + view.dist * cp * Math.cos(view.yaw));
+  camera.lookAt(tgt.x, 0, tgt.z);
+}
+function clampView() { viewT.yaw = Math.max(-1.4, Math.min(1.4, viewT.yaw)); viewT.pitch = Math.max(0.5, Math.min(1.52, viewT.pitch)); viewT.dist = Math.max(6, Math.min(95, viewT.dist)); }
+function rotateBy(dx, dy) { viewT.yaw -= dx * 0.005; viewT.pitch += dy * 0.004; clampView(); lastInput = nowS; }
+function zoomBy(f) { viewT.dist *= f; clampView(); lastInput = nowS; }
+const ray = new THREE.Raycaster(), plane0 = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+function groundAt(px, py, h = 0) {
+  const r = canvas.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(((px - r.left) / r.width) * 2 - 1, -((py - r.top) / r.height) * 2 + 1), camera);
+  const p = new THREE.Vector3(); plane0.constant = -h;
+  if (!ray.ray.intersectPlane(plane0, p)) return null;
+  return { x: p.x + W / 2, y: -p.z + H / 2 };   // モデル座標（cm）
+}
+
+// ---------------- 入力 ----------------
+let mode = 'view';
+const ptrs = new Map(); let gesture = null, drag = null;
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('pointerdown', (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const wasGuide = !guide.hidden; hideGuide(); lastInput = nowS;
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; gesture = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; drag = null; return; }
+  if (ptrs.size > 2) return;
+  drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, rotate: mode === 'view' || e.button === 2 || e.ctrlKey, moved: false, noAct: wasGuide };
+  if (!drag.rotate && !wasGuide) {
+    if (mode === 'sugar') placeSugar(e.clientX, e.clientY, true);
+    else if (mode === 'wipe') wipe(e.clientX, e.clientY);
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); lastInput = nowS;
+  if (gesture && ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (gesture.d > 0 && d > 0) zoomBy(gesture.d / d);
+    rotateBy(mx - gesture.mx, my - gesture.my);
+    gesture = { d, mx, my }; return;
+  }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.rotate) rotateBy(dx, dy);
+  else if (mode === 'wipe' && !drag.noAct) wipe(e.clientX, e.clientY);
+  else if (twigStart) { const x0 = twigStart.px, y0 = twigStart.py, L = Math.hypot(e.clientX - x0, e.clientY - y0); twigPrev.hidden = false; twigPrev.style.left = x0 + 'px'; twigPrev.style.top = (y0 - 2.5) + 'px'; twigPrev.style.width = L + 'px'; twigPrev.style.transform = `rotate(${Math.atan2(e.clientY - y0, e.clientX - x0)}rad)`; }
+});
+const endPtr = (e) => { if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId); if (twigStart && ptrs.size === 0) finishTwig(e.clientX, e.clientY); if (ptrs.size < 2) gesture = null; if (ptrs.size === 0) drag = null; };
+canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * 0.0012)); }, { passive: false });
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input')) return;
+  if (e.code === 'Space') { e.preventDefault(); setPaused(!paused); }
+  else if (e.key === '1') setMode('view'); else if (e.key === '2') setMode('sugar'); else if (e.key === '3') setMode('wipe');
+});
+let tool = 'sugar', twigStart = null;
+const twigPrev = $('#twigPrev');
+function placeSugar(px, py) {
+  if (scn === 'bridge') { build(); story('新しい試行を始めました'); return; }
+  const p = groundAt(px, py); if (!p) return;
+  // 置いてある砂糖・石・小枝をタップしたら外す
+  for (const f of G.foods) {
+    if (f.amount > 0 && Math.hypot(p.x - f.x, p.y - f.y) < f.r + 0.6) { removeFood(G, f.id); story0.emptied.add(f.id); toast('砂糖を取り除きました'); ripple(px, py); return; }
+  }
+  const hit = hitObstacle(G, p.x, p.y, 0.3);
+  if (hit) { removeObstacle(G, hit.o.id); dropMesh(hit.o.id); toast(hit.o.kind === 'twig' ? '小枝を外しました' : '石を外しました'); ripple(px, py); return; }
+  if (p.x < 1 || p.y < 1 || p.x > W - 1 || p.y > H - 1) return;
+  if (tool === 'twig') { twigStart = { px, py, p }; return; }
+  if (tool === 'stone') {
+    const r = 1.1 + Math.random() * 1.3;
+    if (Math.hypot(p.x - G.nest.x, p.y - G.nest.y) < r + 1.5) { toast('巣の上には置けません'); return; }
+    if (G.foods.some((f) => f.amount > 0 && Math.hypot(p.x - f.x, p.y - f.y) < f.r + r + 0.3)) { toast('砂糖の上には置けません'); return; }
+    if (placedCount() >= 12) { toast('置ける石と小枝は12個までです'); return; }
+    const s = addStone(G, p.x, p.y, r); addStoneMesh(s); ripple(px, py); return;
+  }
+  if (hitObstacle(G, p.x, p.y, 0.8)) { toast('石や小枝の上には置けません'); return; }
+  if (Math.hypot(p.x - G.nest.x, p.y - G.nest.y) < 2) { toast('巣のすぐそばには置けません'); return; }
+  const live = G.foods.filter((f) => f.amount > 0);
+  if (live.length >= 4) { toast('砂糖は4か所までです'); return; }
+  addFood(G, p.x, p.y, 200);
+  ripple(px, py);
+}
+function placedCount() { return G.stones.filter((s) => s.placed).length + G.twigs.length; }
+function finishTwig(px, py) {
+  const s = twigStart; twigStart = null; twigPrev.hidden = true;
+  const p = groundAt(px, py); if (!p) return;
+  let x1 = s.p.x, y1 = s.p.y, x2 = p.x, y2 = p.y, L = Math.hypot(x2 - x1, y2 - y1);
+  if (L < 1.5) { const a = Math.random() * Math.PI; x1 = s.p.x - Math.cos(a) * 3; y1 = s.p.y - Math.sin(a) * 3; x2 = s.p.x + Math.cos(a) * 3; y2 = s.p.y + Math.sin(a) * 3; L = 6; }
+  if (L > 14) { x2 = x1 + (x2 - x1) * 14 / L; y2 = y1 + (y2 - y1) * 14 / L; }
+  // 巣の入口はふさがない
+  const ax = x2 - x1, ay = y2 - y1, tt = Math.max(0, Math.min(1, ((G.nest.x - x1) * ax + (G.nest.y - y1) * ay) / (ax * ax + ay * ay || 1)));
+  if (Math.hypot(G.nest.x - (x1 + ax * tt), G.nest.y - (y1 + ay * tt)) < 1.2) { toast('巣の入口はふさげません'); return; }
+  if (placedCount() >= 12) { toast('置ける石と小枝は12個までです'); return; }
+  const w = addTwig(G, x1, y1, x2, y2, 0.22 + Math.random() * 0.1); addTwigMesh(w); ripple(px, py);
+}
+const obsMeshes = new Map();
+function addStoneMesh(s) { s.placed = true; const m = stoneMesh(s.r, 300 + s.id); const [x, z] = toWorld(s.x, s.y); m.position.set(x, 0, z); m.rotation.y = Math.random() * 6; props.add(m); obsMeshes.set(s.id, m); }
+function addTwigMesh(w) {
+  const rr = rng32(w.id * 31 + 7), L = Math.hypot(w.x2 - w.x1, w.y2 - w.y1), nx = -(w.y2 - w.y1) / L, ny = (w.x2 - w.x1) / L;
+  const pts = [];
+  for (let i = 0; i <= 5; i++) { const t = i / 5, wob = (rr() - 0.5) * 0.35 * Math.sin(Math.PI * t); const [X, Z] = toWorld(w.x1 + (w.x2 - w.x1) * t + nx * wob, w.y1 + (w.y2 - w.y1) * t + ny * wob); pts.push(new THREE.Vector3(X, w.r * 0.9, Z)); }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const geo = new THREE.TubeGeometry(curve, 24, w.r, 7, false);
+  const bark = new THREE.MeshStandardMaterial({ color: new THREE.Color(0.11, 0.07, 0.04), roughness: 0.95 });
+  const g = new THREE.Group(); const m = new THREE.Mesh(geo, bark); m.castShadow = true; m.receiveShadow = true; g.add(m);
+  // 小さな枝分かれ
+  const t0 = 0.3 + rr() * 0.4, p0 = curve.getPoint(t0), side = rr() < 0.5 ? 1 : -1;
+  const [dX, dZ] = [nx * side * 1.2 + (w.x2 - w.x1) / L * 0.8, -(ny * side * 1.2 + (w.y2 - w.y1) / L * 0.8)];
+  const br = new THREE.TubeGeometry(new THREE.LineCurve3(p0, new THREE.Vector3(p0.x + dX, w.r * 0.7, p0.z + dZ)), 4, w.r * 0.55, 6, false);
+  const bm = new THREE.Mesh(br, bark); bm.castShadow = true; g.add(bm);
+  // 端の切り口
+  for (const [p, q] of [[pts[0], pts[1]], [pts[5], pts[4]]]) { const c = new THREE.Mesh(new THREE.CircleGeometry(w.r, 10), new THREE.MeshStandardMaterial({ color: 0x6b5638, roughness: 0.9 })); c.position.copy(p); c.lookAt(p.clone().multiplyScalar(2).sub(q)); g.add(c); }
+  props.add(g); obsMeshes.set(w.id, g);
+}
+function dropMesh(id) { const m = obsMeshes.get(id); if (!m) return; props.remove(m); m.traverse((n) => { if (n.geometry) n.geometry.dispose(); }); obsMeshes.delete(id); }
+let wipeMsgT = -9;
+function wipe(px, py) {
+  const p = groundAt(px, py, scn === 'bridge' ? 0.45 : 0); if (!p) return;
+  if (scn === 'garden') { eraseSmell(G, p.x, p.y, 1.6); }
+  else {
+    // 指の近くの枝の目印を消す
+    for (const k of [1, 2]) {
+      const pts = bridgeGeo.paths[k];
+      let md = 1e9; for (const q of pts) md = Math.min(md, Math.hypot(q[0] - p.x, q[1] - p.y));
+      if (md < 2.2 && (B.mark[0][k - 1] > 0 || B.mark[1][k - 1] > 0)) {
+        B.mark[0][k - 1] = 0; B.mark[1][k - 1] = 0;
+        if (nowS - wipeMsgT > 1.5) { wipeMsgT = nowS; toast(k === 1 ? '短い道のにおいを消しました' : '長い道のにおいを消しました'); }
+      }
+    }
+  }
+}
+
+// ---------------- UI ----------------
+const ICON_SUGAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 9.5 12 6l7 3.5v6.5L12 19.5 5 16z"/><path d="M5 9.5 12 13l7-3.5M12 13v6.5"/></svg>\n      置く';
+const ICON_AGAIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M19 4.5V8h-3.5"/></svg>\n      やり直す';
+function modeLabels() { $('#modeSugar').innerHTML = scn === 'bridge' ? ICON_AGAIN : ICON_SUGAR; $('#modeSugar').title = scn === 'bridge' ? 'やり直す（2）' : '置く（2）'; showTools(); }
+function showTools() { $('#tools').hidden = !(mode === 'sugar' && scn === 'garden'); }
+const HINTS = {
+  view: 'ドラッグで見回す。2本指でズーム',
+  sugar: { garden: '下の道具で置く物を選びます。置いた物をタップすると外せます', bridge: 'タップすると、新しい試行を始めます' },
+  wipe: { garden: 'なぞった所のにおいを消します。行列はどうなるでしょう', bridge: '道をなぞると、その道のにおいを消します' },
+};
+let hintTimer = 0;
+function setMode(m) {
+  mode = m; showTools();
+  document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === m)));
+  const h = $('#hint'), t = HINTS[m]; h.textContent = typeof t === 'string' ? t : t[scn]; h.classList.remove('fade');
+  clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.add('fade'), 4200);
+}
+document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.m)));
+let paused = false;
+function setPaused(v) {
+  paused = v; $('#pausedChip').hidden = !v;
+  $('#btnPause').setAttribute('aria-pressed', String(v)); $('#btnPause').setAttribute('aria-label', v ? '再開' : '一時停止');
+  $('#pauseIcon').innerHTML = v ? '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>' : '<path d="M9 6v12M15 6v12"/>';
+}
+$('#btnPause').addEventListener('click', () => setPaused(!paused));
+let storyTimer = 0, story0 = {};
+function story(msg) { const s = $('#story'); s.textContent = msg; s.classList.remove('fade'); clearTimeout(storyTimer); storyTimer = setTimeout(() => s.classList.add('fade'), 4000); }
+let toastTimer = 0;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2200); }
+function ripple(x, y) { const d = document.createElement('div'); d.className = 'ripple'; d.style.left = x + 'px'; d.style.top = y + 'px'; document.body.appendChild(d); setTimeout(() => d.remove(), 900); }
+const guide = $('#guide');
+const GUIDE = {
+  garden: '蟻が巣から出て、砂糖を探しています。<br>見つけた蟻は、においを残して仲間を呼びます。',
+  bridge: '巣と砂糖のあいだに、短い道と長い道。<br>蟻たちは、どちらの道を選ぶでしょう。',
+};
+function showGuide() { guide.innerHTML = GUIDE[scn] + '<span class="sub">ドラッグで見回す ／ 画面に触れると閉じます</span>'; guide.hidden = false; guide.classList.remove('fade'); }
+function hideGuide() { if (guide.hidden) return; guide.classList.add('fade'); setTimeout(() => { guide.hidden = true; }, 500); }
+function updateCount() { const n = G ? G.ants.length : B ? B.ants.length : 0; const el = $('#count'); if (+el.dataset.n !== n) { el.dataset.n = n; el.textContent = n; } }
+
+const sheet = $('#sheet'), backdrop = $('#backdrop');
+function openSheet(v) { sheet.hidden = !v; backdrop.hidden = !v; }
+$('#btnSettings').addEventListener('click', () => openSheet(true));
+$('#btnClose').addEventListener('click', () => openSheet(false));
+backdrop.addEventListener('click', () => openSheet(false));
+function segInit(id, cur, onPick) {
+  const el = $(id);
+  const mark = (v) => el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(v))));
+  mark(cur);
+  el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mark(b.dataset.v); onPick(b.dataset.v); saveOpt(); });
+}
+$('#tool').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; tool = b.dataset.t; $('#tool').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); const h = $('#hint'); h.textContent = { sugar: 'タップした所に砂糖を置きます', stone: 'タップした所に石を置きます', twig: 'なぞった線に沿って小枝を置きます。行列を横切らせてみましょう' }[tool]; h.classList.remove('fade'); clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.add('fade'), 4200); });
+segInit('#optScene', opt.scene, (v) => { opt.scene = v; build(); openSheet(false); showGuide(); setMode(mode); });
+segInit('#optSpeed', opt.speed, (v) => { opt.speed = +v; });
+segInit('#optN', opt.n, (v) => { opt.n = +v; if (scn === 'garden') build(); });
+segInit('#optR', opt.r, (v) => { opt.r = +v; if (scn === 'bridge') build(); });
+const optSmell = $('#optSmell'); optSmell.checked = opt.smell;
+optSmell.addEventListener('change', () => { opt.smell = optSmell.checked; smellMesh.visible = opt.smell && scn === 'garden'; saveOpt(); });
+$('#btnResetView').addEventListener('click', () => { Object.assign(viewT, { yaw: 0, ...VIEW0() }); openSheet(false); });
+$('#btnGuide').addEventListener('click', () => { openSheet(false); showGuide(); });
+$('#btnRestart').addEventListener('click', () => { build(); openSheet(false); });
+let verTaps = 0, verTimer = 0;
+$('#ver').addEventListener('click', () => { verTaps++; clearTimeout(verTimer); verTimer = setTimeout(() => { verTaps = 0; }, 1500); if (verTaps >= 5) { verTaps = 0; $('#devSec').hidden = false; } });
+$('#btnDevHide').addEventListener('click', () => { $('#devSec').hidden = true; });
+$('#optDebug').addEventListener('change', (e) => { $('#debug').hidden = !e.target.checked; });
+let testsDone = false;
+$('#testBox').addEventListener('toggle', () => {
+  if (!$('#testBox').open || testsDone) return; testsDone = true;
+  $('#vlist').textContent = '実行中…';
+  setTimeout(() => { const r = runAriTests(60); $('#vlist').innerHTML = r.map((v) => `<div><b>${v.id} ${v.status === 'pass' ? '合格' : '不合格'}</b>　${v.name}<br>${v.detail}</div>`).join(''); }, 50);
+});
+
+// ---------------- 描画の更新 ----------------
+const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V3 = new THREE.Vector3(), S3 = new THREE.Vector3(1, 1, 1), YAX = new THREE.Vector3(0, 1, 0);
+const antPhase = new Map();
+function setAnt(i, x, y, th, hgt, id, step, carry) {
+  const [X, Z] = toWorld(x, y);
+  let ph = antPhase.get(id) || 0; ph += step / 0.42 * Math.PI * 2; antPhase.set(id, ph);
+  const bob = Math.abs(Math.sin(ph)) * 0.012;
+  Q.setFromAxisAngle(YAX, th);
+  V3.set(X, hgt + bob, Z);
+  M4.compose(V3, Q, S3);
+  ants.setMatrixAt(i, M4);
+  phaseAttr.array[i] = ph;
+  if (carry) {
+    V3.set(X + Math.cos(th) * 0.31, hgt + 0.15, Z - Math.sin(th) * 0.31);
+    M4.compose(V3, Q, S3); carried.setMatrixAt(nCarry++, M4);
+  }
+}
+let nCarry = 0;
+const lastPos = new Map();
+function syncGarden() {
+  let i = 0; nCarry = 0;
+  for (const a of G.ants) {
+    if (i >= MAXA) break;
+    const lp = lastPos.get(a.id); const step = lp ? Math.hypot(a.x - lp[0], a.y - lp[1]) : 0; lastPos.set(a.id, [a.x, a.y]);
+    setAnt(i++, a.x, a.y, a.th, 0, a.id, Math.min(step, 0.5), a.st === 2 && !a.empty);
+  }
+  ants.count = i; carried.count = nCarry;
+  ants.instanceMatrix.needsUpdate = true; carried.instanceMatrix.needsUpdate = true; phaseAttr.needsUpdate = true;
+  // 砂糖の山
+  let k = 0;
+  for (const f of G.foods) {
+    for (const q of f.grains) {
+      if (k >= 3000) break;
+      const [gx, gz] = toWorld(q.x, q.y);
+      V3.set(gx, 0.04 + q.h, gz); Q.setFromAxisAngle(YAX, q.rot); S3.set(q.s, q.s, q.s);
+      M4.compose(V3, Q, S3); piles.setMatrixAt(k++, M4);
+    }
+  }
+  S3.set(1, 1, 1);
+  piles.count = k; piles.instanceMatrix.needsUpdate = true;
+}
+function syncBridge() {
+  let i = 0; nCarry = 0;
+  for (const a of B.ants) {
+    if (i >= MAXA) break;
+    const frac = a.dir === 1 ? a.s / a.dur : 1 - a.s / a.dur;
+    const p = bridgePoint(a.seg, frac, (a.lane * 0.32) + (a.dir === 1 ? 0.2 : -0.2));
+    const th = a.dir === 1 ? p.th : p.th + Math.PI;
+    const lp = lastPos.get(a.id); const step = lp ? Math.hypot(p.x - lp[0], p.y - lp[1]) : 0; lastPos.set(a.id, [p.x, p.y]);
+    setAnt(i++, p.x, p.y, th, 0.45, a.id, Math.min(step, 0.5), a.carry);
+  }
+  ants.count = i; carried.count = nCarry;
+  ants.instanceMatrix.needsUpdate = true; carried.instanceMatrix.needsUpdate = true; phaseAttr.needsUpdate = true;
+  // 皿の砂糖（減らない）
+  let k = 0; const r = rng32(7); const f = bridgeGeo.food; const [fx, fz] = toWorld(f.x, f.y);
+  for (let j = 0; j < 500; j++) { const a = r() * 6.283, rr = Math.sqrt(r()) * 0.9, hh = (1 - rr / 0.95) * 0.45 * r(); V3.set(fx + Math.cos(a) * rr, 0.38 + hh, fz + Math.sin(a) * rr); Q.setFromAxisAngle(YAX, r() * 6.28); M4.compose(V3, Q, S3); piles.setMatrixAt(k++, M4); }
+  piles.count = k; piles.instanceMatrix.needsUpdate = true;
+  // においを見る：帯の色
+  if (opt.smell || bridgeGeo.tinted) {
+    const mx = Math.max(10, B.mark[0][0], B.mark[0][1], B.mark[1][0], B.mark[1][1]);
+    for (const k2 of [1, 2]) {
+      const g = bridgeGeo.strips[k2].geometry, col = g.attributes.color, n = col.count / 2;
+      for (let q = 0; q < n; q++) {
+        const t = q / (n - 1), m = (B.mark[0][k2 - 1] * (1 - t) + B.mark[1][k2 - 1] * t) / mx;
+        const s = opt.smell ? Math.min(1, m) : 0;
+        for (const e of [0, 1]) col.setXYZ(q * 2 + e, 1 - 0.45 * s, 1 - 0.05 * s, 1 - 0.2 * s);
+      }
+      col.needsUpdate = true;
+    }
+    bridgeGeo.tinted = opt.smell;
+  }
+}
+// 向きの規約：モデルの角度 th（x 右、y 上）→ 世界では Y 軸まわりに th（+X が前）
+function watchStory() {
+  if (scn === 'garden') {
+    for (const f of G.foods) {
+      if (f.amount <= 0) { if (!story0.emptied.has(f.id)) { story0.emptied.add(f.id); story('砂糖がなくなりました'); } continue; }
+    }
+    const carrying = G.ants.filter((a) => a.st === 2 && !a.empty).length;
+    if (!story0.trail && carrying >= 12) { story0.trail = true; story('砂糖まで、行列ができました'); }
+  } else {
+    const recent = B.choices.slice(-60);
+    if (recent.length >= 60 && !story0.aligned) {
+      const s = recent.filter((c) => c.br === 1).length / recent.length;
+      if (s >= 0.85) { story0.aligned = true; story(B.r === 1 ? '片方の道に、行列がそろいました' : '短い道に、行列がそろいました'); }
+      else if (s <= 0.15) { story0.aligned = true; story(B.r === 1 ? '片方の道に、行列がそろいました' : '長い道に、行列がそろいました'); }
+    }
+  }
+}
+let smellTick = 0;
+function updateSmell() {
+  if (!opt.smell || scn !== 'garden') return;
+  if (++smellTick % 6) return;
+  const F = G.F, n = F.length;
+  for (let c = 0; c < n; c++) { const v = Math.sqrt(F[c]) * 60; smellBytes[c] = v > 255 ? 255 : v; }
+  smellTex.needsUpdate = true;
+}
+
+// ---------------- ループ ----------------
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.fov = w < h ? 52 : 40; camera.updateProjectionMatrix();
+}
+let rt = 0;
+addEventListener('resize', () => { clearTimeout(rt); const was = portrait(); rt = setTimeout(() => { resize(); if ((W < H) !== portrait()) build(); }, 250); });
+let last = performance.now(), acc = 0, fpsAcc = 0, fpsN = 0, dbgT = 0;
+const DT = 1 / 30;
+function frame(t) {
+  const dt = Math.min(0.1, (t - last) / 1000); last = t; nowS += dt; timeU.value = nowS;
+  if (!paused) {
+    acc += dt * opt.speed;
+    let n = 0;
+    while (acc >= DT && n < 12) { if (G) stepGarden(G, DT); else stepBridge(B, DT); acc -= DT; n++; }
+    if (acc > DT) acc = 0;
+    watchStory();
+  }
+  if (G) { syncGarden(); updateSmell(); } else syncBridge();
+  updateCount();
+  applyCamera(dt);
+  renderer.render(scene, camera);
+  fpsAcc += dt; fpsN++;
+  if (!$('#debug').hidden && t - dbgT > 300) {
+    dbgT = t;
+    const rows = [];
+    if (G) {
+      rows.push(['場面', '庭（拡張）'], ['時刻', G.t.toFixed(0) + ' 秒'], ['蟻', G.ants.length + '／' + G.maxAnts], ['運んでいる', G.ants.filter((a) => a.st === 2 && !a.empty).length], ['空荷で帰る', G.ants.filter((a) => a.st === 2 && a.empty).length], ['巣へ運んだ', G.delivered + ' 粒'], ['砂糖の残り', G.foods.map((f) => Math.max(0, f.amount)).join('・') || '-'], ['選択式', '(k+c)², k=' + G.k], ['においの半減', G.halfLife + ' 秒']);
+    } else {
+      const s5 = shortShare(B, Math.max(0, B.t - 300), B.t);
+      rows.push(['場面', '二本の橋'], ['時刻', B.t.toFixed(0) + ' 秒'], ['長さの比 r', B.r], ['蟻（橋の上）', B.ants.length], ['短い道の割合', Number.isFinite(s5) ? (s5 * 100).toFixed(0) + '%（直近300秒）' : '-'], ['目印 巣側 短/長', B.mark[0].join(' / ')], ['目印 餌側 短/長', B.mark[1].join(' / ')], ['渡った回数 短/長', B.crossings.join(' / ')], ['流入', B.flux + ' 匹/秒']);
+    }
+    rows.push(['FPS', (fpsN / fpsAcc).toFixed(0)]); fpsAcc = 0; fpsN = 0;
+    $('#dbg').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------------- 起動 ----------------
+resize();
+build();
+view.pitch = viewT.pitch; view.dist = viewT.dist; tgt.x = focus[0]; tgt.z = focus[1];
+applyCamera(1);
+setMode('view'); $('#hint').classList.add('fade');
+showGuide();
+requestAnimationFrame((tt) => { last = tt; frame(tt); });
+window.__ari = { get G() { return G; }, get B() { return B; }, opt, build, setMode, run(n) { for (let i = 0; i < n; i++) { if (G) stepGarden(G, DT); else stepBridge(B, DT); } } };
+})();
+</script>
+</body></html>

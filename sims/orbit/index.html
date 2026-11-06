@@ -1,0 +1,1160 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="ORBIT"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>ORBIT</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!--
+  ORBIT 重力シミュレータ  v0.1「PULL & THROW」
+  準拠：研究準拠シミュレータシリーズ 設計基準 v1.0（10テーマ比較 2 重力 S9）
+
+  更新履歴
+  v0.1 2026-11-02  初版。直接和＋leapfrog（固定刻み）の重力エンジン、場面4種（銀河の衝突・恒星系・連星・三体の8の字）、
+                   操作「眺める／投げる／引き寄せる」、軌跡、裏モード（エネルギー誤差・周期の理論値との比較）
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Unbounded:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
+<style>
+/* Layout: 全画面の宇宙に、上端の細い情報帯と下端のモード切替だけを浮かべる。シリーズ共通の構成で、意図的にダーク固定。 */
+:root {
+  --void: #03050a;
+  --glass: rgba(10, 13, 22, 0.62);
+  --glass-strong: rgba(8, 10, 18, 0.92);
+  --line: rgba(220, 210, 190, 0.15);
+  --ink: #eeece6;
+  --mute: #979aa6;
+  --star: #f1d9ab;
+  --star-ink: #241a08;
+  --cool: #a9c4ff;
+  --vignette: rgba(0, 0, 3, 0.55);
+  --f-mark: "Unbounded", "Zen Kaku Gothic New", system-ui, sans-serif;
+  --f-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 14px;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  background: var(--void); color: var(--ink); font-family: var(--f-ui); font-size: 14px;
+  overflow: hidden; overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--star); outline-offset: 2px; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 52%, var(--vignette) 100%); }
+
+.top {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mark { font-family: var(--f-mark); font-weight: 600; font-size: 15px; letter-spacing: 0.32em; color: var(--ink); opacity: 0.92; white-space: nowrap; }
+.count { display: flex; align-items: baseline; gap: 4px; font-family: var(--f-num); font-variant-numeric: tabular-nums; color: var(--star); font-size: 15px; white-space: nowrap; }
+.count small { font-family: var(--f-ui); font-size: 11px; color: var(--mute); }
+.top .spacer { flex: 1; min-width: 0; }
+.icon-btn {
+  pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; border: 1px solid var(--line);
+  background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); cursor: pointer;
+}
+.icon-btn svg { width: 20px; height: 20px; }
+
+.story, .paused-chip {
+  position: fixed; z-index: 5; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + 70px); pointer-events: none; white-space: nowrap;
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--glass); font-size: 12px; letter-spacing: 0.08em; transition: opacity 1.2s;
+}
+.story { color: var(--star); }
+.story.fade { opacity: 0; }
+.paused-chip { color: var(--cool); top: calc(env(safe-area-inset-top, 0px) + 110px); }
+
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mode-hint {
+  max-width: 100%; padding: 6px 14px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line); color: var(--ink);
+  font-size: 12px; line-height: 1.6; text-align: center; transition: opacity .6s;
+}
+.mode-hint.fade { opacity: 0; }
+.modes {
+  pointer-events: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  width: min(100%, 360px); padding: 4px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.modes button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--mute); font-size: 13px; font-weight: 500; cursor: pointer; letter-spacing: 0.04em;
+  transition: background .2s, color .2s; white-space: nowrap;
+}
+.modes button svg { width: 18px; height: 18px; flex: none; }
+.modes button[aria-pressed="true"] { background: var(--star); color: var(--star-ink); }
+
+.sel-ring { position: fixed; z-index: 3; left: 0; top: 0; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; border: 1px solid rgba(238, 236, 230, 0.5); pointer-events: none; }
+.sel-ring::before, .sel-ring::after { content: ""; position: absolute; background: rgba(238, 236, 230, 0.5); }
+.sel-ring::before { left: 50%; top: -8px; width: 1px; height: 6px; }
+.sel-ring::after { left: 50%; bottom: -8px; width: 1px; height: 6px; }
+
+.guide {
+  position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 4;
+  width: min(calc(100% - 48px), 320px); padding: 18px 20px; border-radius: var(--r);
+  background: var(--glass); border: 1px solid var(--line); text-align: center;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  pointer-events: none; line-height: 1.9; font-size: 14px; transition: opacity .5s;
+}
+.guide .sub { display: block; margin-top: 6px; font-size: 11px; color: var(--mute); }
+.guide.fade { opacity: 0; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 8;
+  top: calc(env(safe-area-inset-top, 0px) + 150px); max-width: calc(100% - 32px);
+  padding: 8px 14px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--line);
+  font-size: 12px; pointer-events: none;
+}
+.fatal { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--mute); z-index: 2; }
+
+.backdrop { position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 4, 0.45); }
+.sheet {
+  position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 10;
+  width: min(100%, 440px); max-height: 84%; overflow-y: auto;
+  padding: 18px max(18px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 18px) max(18px, env(safe-area-inset-left, 0px));
+  border-radius: 20px 20px 0 0; background: var(--glass-strong);
+  border: 1px solid var(--line); border-bottom: 0;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  -webkit-user-select: text; user-select: text;
+}
+.sheet h2 { margin: 0 0 4px; font-family: var(--f-mark); font-weight: 400; font-size: 13px; letter-spacing: 0.24em; color: var(--mute); }
+.sheet .sub-h { margin: 18px 0 0; }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.row.stack { flex-wrap: wrap; }
+.row .lbl { flex: 1; min-width: 0; }
+.row .lbl small { display: block; color: var(--mute); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+.switch { position: relative; width: 48px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(220, 210, 190, 0.16); transition: background .2s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); transition: transform .2s; }
+.switch input:checked + span { background: var(--star); }
+.switch input:checked + span::after { transform: translateX(20px); background: var(--star-ink); }
+.switch input:focus-visible + span { outline: 2px solid var(--star); outline-offset: 2px; }
+.seg { display: flex; gap: 4px; padding: 3px; border-radius: 10px; border: 1px solid var(--line); flex: none; }
+.seg button { border: 0; background: transparent; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--mute); cursor: pointer; min-height: 32px; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--star); color: var(--star-ink); }
+.scenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.scenes button { text-align: left; border: 1px solid var(--line); background: rgba(220, 210, 190, 0.04); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: grid; gap: 2px; min-height: 58px; }
+.scenes button b { font-weight: 500; font-size: 13px; }
+.scenes button small { color: var(--mute); font-size: 11px; line-height: 1.45; }
+.scenes button[aria-pressed="true"] { border-color: var(--star); background: rgba(241, 217, 171, 0.08); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 14px 0 4px; }
+.chip { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: rgba(220, 210, 190, 0.05); cursor: pointer; font-size: 13px; }
+.ver { margin-top: 14px; font-size: 11px; color: var(--mute); line-height: 1.7; }
+.ver b { font-family: var(--f-num); font-weight: 500; color: var(--ink); }
+#ver { -webkit-user-select: none; user-select: none; }
+.hist { padding: 12px 0 0; }
+.hist summary { cursor: pointer; font-size: 13px; color: var(--mute); }
+.vlist { display: grid; gap: 6px; padding: 8px 0; font-size: 11.5px; color: var(--mute); }
+.vlist b { color: var(--ink); font-family: var(--f-num); font-weight: 500; }
+
+.debug {
+  position: fixed; z-index: 6; left: max(10px, env(safe-area-inset-left, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 62px);
+  width: min(calc(100% - 20px), 240px); padding: 10px 12px; border-radius: 12px;
+  background: var(--glass-strong); border: 1px solid var(--line);
+  font-family: var(--f-num); font-size: 11px; line-height: 1.55; pointer-events: none;
+}
+.debug dl { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; margin: 0; }
+.debug dt { color: var(--mute); font-family: var(--f-ui); }
+.debug dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .bottom { right: auto; width: min(44vw, 340px); align-items: flex-start; padding-right: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+  .modes { position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); width: auto; grid-template-columns: 1fr; border-radius: 26px; }
+  .modes button { flex-direction: column; gap: 2px; min-height: 50px; min-width: 70px; padding: 5px 8px; font-size: 11px; border-radius: 22px; }
+  .mode-hint { text-align: left; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide, .mode-hint, .story, .modes button, .switch span, .switch span::after { transition: none; }
+}
+</style>
+
+<canvas id="scene" aria-label="重力で引き合う星々"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+<div class="sel-ring" id="selRing" hidden></div>
+
+<header class="top">
+  <span class="mark">ORBIT</span>
+  <span class="count" aria-live="polite"><span id="count">0</span><small>天体</small></span>
+  <span class="spacer"></span>
+  <button class="icon-btn" id="btnPause" aria-label="一時停止" aria-pressed="false" title="一時停止（Space）">
+    <svg id="pauseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6v12M15 6v12"/></svg>
+  </button>
+  <button class="icon-btn" id="btnSettings" aria-label="設定">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
+  </button>
+</header>
+
+<div class="story fade" id="story" aria-live="polite"></div>
+<div class="paused-chip" id="pausedChip" hidden>一時停止中</div>
+<div class="guide" id="guide" hidden>
+  星は重力で引き合い、軌道を描きます。<br>二つの銀河が、もうすぐすれ違います。
+  <span class="sub">ドラッグで見回す ／ 画面に触れると閉じます</span>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<aside class="debug" id="debug" hidden>
+  <dl>
+    <dt>場面</dt><dd id="dScene">-</dd>
+    <dt>時刻 t</dt><dd id="dT">-</dd>
+    <dt>刻み dt</dt><dd id="dDt">-</dd>
+    <dt>天体／粒子</dt><dd id="dN">-</dd>
+    <dt>軟化 ε</dt><dd id="dEps">-</dd>
+    <dt>ΔE/E（天体）</dt><dd id="dE">-</dd>
+    <dt>ΔL/L（天体）</dt><dd id="dL">-</dd>
+    <dt id="dXk">-</dt><dd id="dX">-</dd>
+    <dt>FPS</dt><dd id="dFps">-</dd>
+  </dl>
+</aside>
+
+<div class="bottom">
+  <div class="mode-hint fade" id="hint"></div>
+  <nav class="modes" aria-label="操作モード">
+    <button data-m="view" aria-pressed="true" title="眺める（1）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>
+      眺める
+    </button>
+    <button data-m="throw" aria-pressed="false" title="投げる（2）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="2.4"/><path d="M8.2 15.2C11 11.5 14 9 19 7"/><path d="M15.5 6.2 19 7l-1.2 3.4"/></svg>
+      投げる
+    </button>
+    <button data-m="pull" aria-pressed="false" title="引き寄せる（3）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="5.5" stroke-dasharray="2 2.6"/><circle cx="12" cy="12" r="9" stroke-dasharray="2 3.4" opacity=".7"/></svg>
+      引き寄せる
+    </button>
+  </nav>
+</div>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<section class="sheet" id="sheet" hidden aria-label="設定">
+  <h2>SCENES</h2>
+  <div class="row stack">
+    <div class="scenes" id="optScene">
+      <button data-v="galaxies" aria-pressed="true"><b>銀河の衝突</b><small>二つの渦巻銀河がすれ違い、潮汐の尾が伸びる</small></button>
+      <button data-v="solar" aria-pressed="false"><b>恒星系</b><small>太陽と惑星、小惑星帯</small></button>
+      <button data-v="binary" aria-pressed="false"><b>連星</b><small>二つの星が楕円を描いて回り合う</small></button>
+      <button data-v="figure8" aria-pressed="false"><b>三体の8の字</b><small>同じ重さの三つの星が、一本の8の字を追いかけ合う</small></button>
+    </div>
+  </div>
+  <h2 class="sub-h">SETTINGS</h2>
+  <div class="row">
+    <div class="lbl">速さ</div>
+    <div class="seg" id="optSpeed"><button data-v="slow" aria-pressed="false">ゆっくり</button><button data-v="normal" aria-pressed="true">ふつう</button><button data-v="fast" aria-pressed="false">はやい</button></div>
+  </div>
+  <div class="row">
+    <div class="lbl">軌跡<small>星や銀河の中心が通った道を残します。</small></div>
+    <label class="switch"><input type="checkbox" id="optTrail" checked aria-label="軌跡"><span></span></label>
+  </div>
+  <div class="row">
+    <div class="lbl">星の数<small>銀河と小惑星帯の粒の数。変えると場面を最初からやり直します。</small></div>
+    <div class="seg" id="optQ"><button data-v="low" aria-pressed="false">少ない</button><button data-v="mid" aria-pressed="true">ふつう</button><button data-v="high" aria-pressed="false">多い</button></div>
+  </div>
+  <div class="btn-row">
+    <button class="chip" id="btnResetView">視点を戻す</button>
+    <button class="chip" id="btnGuide">ガイドを再表示</button>
+    <button class="chip" id="btnRestart">最初から</button>
+    <button class="chip" id="btnClose">閉じる</button>
+  </div>
+  <section id="devSec" hidden aria-label="裏モード">
+    <h2 class="sub-h">DEVELOPER</h2>
+    <div class="row">
+      <div class="lbl">開発者表示<small>エネルギー誤差・角運動量・周期の理論値との比較などを左上に出します。</small></div>
+      <label class="switch"><input type="checkbox" id="optDebug" aria-label="開発者表示"><span></span></label>
+    </div>
+    <details class="hist" open>
+      <summary>エンジンの検証（読込時にこのブラウザで実行）</summary>
+      <div class="vlist" id="vlist"></div>
+    </details>
+    <details class="hist">
+      <summary>更新履歴</summary>
+      <p class="ver">v0.1（2026-11-02）初版：銀河の衝突・恒星系・連星・三体の8の字。眺める・投げる・引き寄せる</p>
+    </details>
+    <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
+  </section>
+  <p class="ver" id="ver"><b>ORBIT v0.1</b> PULL &amp; THROW<br>
+  重力は、すべての天体どうしの引力を足し合わせる直接和と、leapfrog 法（固定刻み）で計算しています。連星と三体は原式どおり、銀河と恒星系は近づきすぎて計算が破綻しないよう力をわずかにやわらげています。銀河の衝突は Toomre &amp; Toomre（1972）と同じく、円盤の星を質量のない粒として扱います。星の合体と指の重力は演出です。</p>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ===== ENGINE BEGIN =====
+// ORBIT 重力エンジン v0.1（描画に依存しない。Node.js で試験できる）
+// 天体：直接和 aᵢ = G Σⱼ mⱼ (rⱼ − rᵢ) / (|rⱼ − rᵢ|² + ε²)^{3/2}。ε=0 なら原式どおり。
+// 粒子：質量を持たない試験粒子（天体からの重力だけを受ける。Toomre & Toomre 1972 と同じ扱い）。
+// 積分：leapfrog（KDK）、固定刻み dt。
+const ORBIT_ENGINE_VERSION = '0.1';
+
+function createSim(o) {
+  const cap = o.bodyCap || 64;
+  const sim = {
+    G: o.G ?? 1, dt: o.dt, epsB: o.epsB ?? 0, epsP: o.epsP ?? 0, merge: !!o.merge, t: 0, steps: 0,
+    nb: 0, bx: new Float64Array(cap * 3), bv: new Float64Array(cap * 3), ba: new Float64Array(cap * 3),
+    bm: new Float64Array(cap), br: new Float64Array(cap), bkind: new Array(cap), bid: new Int32Array(cap),
+    np: 0, px: new Float64Array(0), pv: new Float64Array(0), pa: new Float64Array(0), psrc: new Uint8Array(0),
+    ext: null, nextId: 1, events: [],
+  };
+  return sim;
+}
+function addBody(sim, x, v, m, r, kind) {
+  if (sim.nb >= sim.bm.length) return -1;
+  const i = sim.nb++;
+  sim.bx.set(x, i * 3); sim.bv.set(v, i * 3); sim.bm[i] = m; sim.br[i] = r || 0; sim.bkind[i] = kind || 'star'; sim.bid[i] = sim.nextId++;
+  return i;
+}
+function setParticles(sim, xs, vs, src) {
+  sim.np = src.length;
+  sim.px = Float64Array.from(xs); sim.pv = Float64Array.from(vs); sim.pa = new Float64Array(sim.np * 3); sim.psrc = Uint8Array.from(src);
+}
+function accel(sim) {
+  const { nb, bx, ba, bm, G } = sim, e2 = sim.epsB * sim.epsB;
+  ba.fill(0, 0, nb * 3);
+  for (let i = 0; i < nb; i++) {
+    const i3 = i * 3;
+    for (let j = i + 1; j < nb; j++) {
+      const j3 = j * 3;
+      const dx = bx[j3] - bx[i3], dy = bx[j3 + 1] - bx[i3 + 1], dz = bx[j3 + 2] - bx[i3 + 2];
+      const r2 = dx * dx + dy * dy + dz * dz + e2;
+      const inv = G / (r2 * Math.sqrt(r2));
+      const fi = bm[j] * inv, fj = bm[i] * inv;
+      ba[i3] += dx * fi; ba[i3 + 1] += dy * fi; ba[i3 + 2] += dz * fi;
+      ba[j3] -= dx * fj; ba[j3 + 1] -= dy * fj; ba[j3 + 2] -= dz * fj;
+    }
+  }
+  const ext = sim.ext;
+  if (ext) for (let i = 0; i < nb; i++) addPoint(ba, i * 3, bx, ext.x, ext.y, ext.z, G * ext.m, ext.eps * ext.eps);
+  const { np, px, pa } = sim, p2 = sim.epsP * sim.epsP;
+  for (let k = 0; k < np; k++) {
+    const k3 = k * 3;
+    let ax = 0, ay = 0, az = 0;
+    const x = px[k3], y = px[k3 + 1], z = px[k3 + 2];
+    for (let j = 0; j < nb; j++) {
+      const j3 = j * 3;
+      const dx = bx[j3] - x, dy = bx[j3 + 1] - y, dz = bx[j3 + 2] - z;
+      const r2 = dx * dx + dy * dy + dz * dz + p2;
+      const f = G * bm[j] / (r2 * Math.sqrt(r2));
+      ax += dx * f; ay += dy * f; az += dz * f;
+    }
+    pa[k3] = ax; pa[k3 + 1] = ay; pa[k3 + 2] = az;
+    if (ext) addPoint(pa, k3, px, ext.x, ext.y, ext.z, G * ext.m, ext.eps * ext.eps);
+  }
+}
+function addPoint(a, i3, x, ex, ey, ez, gm, e2) {
+  const dx = ex - x[i3], dy = ey - x[i3 + 1], dz = ez - x[i3 + 2];
+  const r2 = dx * dx + dy * dy + dz * dz + e2;
+  const f = gm / (r2 * Math.sqrt(r2));
+  a[i3] += dx * f; a[i3 + 1] += dy * f; a[i3 + 2] += dz * f;
+}
+function kick(v, a, n3, h) { for (let i = 0; i < n3; i++) v[i] += a[i] * h; }
+function drift(x, v, n3, h) { for (let i = 0; i < n3; i++) x[i] += v[i] * h; }
+// 1刻み（KDK）。初回は加速度を先に求めておく
+function step(sim) {
+  if (!sim.ready) { accel(sim); sim.ready = true; }
+  const h = sim.dt * 0.5, nb3 = sim.nb * 3, np3 = sim.np * 3;
+  kick(sim.bv, sim.ba, nb3, h); kick(sim.pv, sim.pa, np3, h);
+  drift(sim.bx, sim.bv, nb3, sim.dt); drift(sim.px, sim.pv, np3, sim.dt);
+  accel(sim);
+  kick(sim.bv, sim.ba, nb3, h); kick(sim.pv, sim.pa, np3, h);
+  sim.t += sim.dt; sim.steps++;
+  if (sim.merge) mergeBodies(sim);
+}
+// 外部の力や天体の追加で加速度が変わったら呼ぶ
+function invalidate(sim) { sim.ready = false; }
+
+// 衝突合体（表示用の規則。質量と運動量を保存し、位置は重心）
+function mergeBodies(sim) {
+  let merged = false;
+  for (let i = 0; i < sim.nb; i++) for (let j = i + 1; j < sim.nb; j++) {
+    const i3 = i * 3, j3 = j * 3;
+    const dx = sim.bx[j3] - sim.bx[i3], dy = sim.bx[j3 + 1] - sim.bx[i3 + 1], dz = sim.bx[j3 + 2] - sim.bx[i3 + 2];
+    const rr = sim.br[i] + sim.br[j];
+    if (dx * dx + dy * dy + dz * dz < rr * rr) {
+      const mi = sim.bm[i], mj = sim.bm[j], m = mi + mj;
+      for (let a = 0; a < 3; a++) {
+        sim.bx[i3 + a] = (sim.bx[i3 + a] * mi + sim.bx[j3 + a] * mj) / m;
+        sim.bv[i3 + a] = (sim.bv[i3 + a] * mi + sim.bv[j3 + a] * mj) / m;
+      }
+      const keepKind = mi >= mj ? sim.bkind[i] : sim.bkind[j];
+      const keepId = mi >= mj ? sim.bid[i] : sim.bid[j];
+      sim.bm[i] = m; sim.br[i] = Math.cbrt(Math.pow(sim.br[i], 3) + Math.pow(sim.br[j], 3)); sim.bkind[i] = keepKind;
+      sim.events.push({ type: 'merge', t: sim.t, a: sim.bid[i], b: sim.bid[j], into: keepId });
+      sim.bid[i] = keepId;
+      removeBody(sim, j); j--; merged = true;
+    }
+  }
+  if (merged) { accel(sim); }
+}
+function removeBody(sim, j) {
+  const last = sim.nb - 1;
+  if (j !== last) {
+    sim.bx.copyWithin(j * 3, last * 3, last * 3 + 3); sim.bv.copyWithin(j * 3, last * 3, last * 3 + 3); sim.ba.copyWithin(j * 3, last * 3, last * 3 + 3);
+    sim.bm[j] = sim.bm[last]; sim.br[j] = sim.br[last]; sim.bkind[j] = sim.bkind[last]; sim.bid[j] = sim.bid[last];
+  }
+  sim.nb--;
+}
+
+// 診断（天体のみ）
+function energy(sim) {
+  const { nb, bx, bv, bm, G } = sim, e2 = sim.epsB * sim.epsB;
+  let K = 0, P = 0;
+  for (let i = 0; i < nb; i++) {
+    const i3 = i * 3;
+    K += 0.5 * bm[i] * (bv[i3] ** 2 + bv[i3 + 1] ** 2 + bv[i3 + 2] ** 2);
+    for (let j = i + 1; j < nb; j++) {
+      const j3 = j * 3;
+      const r = Math.sqrt((bx[j3] - bx[i3]) ** 2 + (bx[j3 + 1] - bx[i3 + 1]) ** 2 + (bx[j3 + 2] - bx[i3 + 2]) ** 2 + e2);
+      P -= G * bm[i] * bm[j] / r;
+    }
+  }
+  return K + P;
+}
+function angMom(sim) {
+  const { nb, bx, bv, bm } = sim;
+  let lx = 0, ly = 0, lz = 0;
+  for (let i = 0; i < nb; i++) {
+    const i3 = i * 3, m = bm[i];
+    lx += m * (bx[i3 + 1] * bv[i3 + 2] - bx[i3 + 2] * bv[i3 + 1]);
+    ly += m * (bx[i3 + 2] * bv[i3] - bx[i3] * bv[i3 + 2]);
+    lz += m * (bx[i3] * bv[i3 + 1] - bx[i3 + 1] * bv[i3]);
+  }
+  return [lx, ly, lz];
+}
+function centerOfMass(sim) {
+  const { nb, bx, bv, bm } = sim;
+  let M = 0; const c = [0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < nb; i++) { M += bm[i]; for (let a = 0; a < 3; a++) { c[a] += bm[i] * bx[i * 3 + a]; c[3 + a] += bm[i] * bv[i * 3 + a]; } }
+  for (let a = 0; a < 6; a++) c[a] /= M || 1;
+  return { M, x: c.slice(0, 3), v: c.slice(3) };
+}
+// 重心を原点に、重心速度を0にそろえる
+function centerFrame(sim) {
+  const c = centerOfMass(sim);
+  for (let i = 0; i < sim.nb; i++) for (let a = 0; a < 3; a++) { sim.bx[i * 3 + a] -= c.x[a]; sim.bv[i * 3 + a] -= c.v[a]; }
+  for (let k = 0; k < sim.np; k++) for (let a = 0; a < 3; a++) { sim.px[k * 3 + a] -= c.x[a]; sim.pv[k * 3 + a] -= c.v[a]; }
+  invalidate(sim);
+}
+
+// 投げる前の予測：天体だけを複製して、新しい天体の軌跡を返す
+function predictPath(sim, x, v, m, r, steps, stride) {
+  const s = createSim({ G: sim.G, dt: sim.dt, epsB: sim.epsB, epsP: sim.epsP, bodyCap: sim.nb + 1 });
+  for (let i = 0; i < sim.nb; i++) addBody(s, sim.bx.subarray(i * 3, i * 3 + 3), sim.bv.subarray(i * 3, i * 3 + 3), sim.bm[i], sim.br[i], sim.bkind[i]);
+  s.ext = sim.ext;
+  const k = addBody(s, x, v, m, r, 'thrown');
+  const out = [];
+  for (let n = 0; n < steps; n++) {
+    step(s);
+    if (n % stride === 0) out.push(s.bx[k * 3], s.bx[k * 3 + 1], s.bx[k * 3 + 2]);
+    // ほかの天体にぶつかる所で止める
+    let hit = false;
+    for (let i = 0; i < s.nb; i++) if (i !== k) {
+      const d2 = (s.bx[i * 3] - s.bx[k * 3]) ** 2 + (s.bx[i * 3 + 1] - s.bx[k * 3 + 1]) ** 2 + (s.bx[i * 3 + 2] - s.bx[k * 3 + 2]) ** 2;
+      if (d2 < (s.br[i] + r) ** 2) hit = true;
+    }
+    if (hit) break;
+  }
+  return out;
+}
+
+// ---- 場面 ----
+// 乱数（xorshift32）
+function rng32(seed) { let s = (seed >>> 0) || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
+
+// 二体のケプラー軌道（重心静止、軌道面は xz 平面、近点は +x 方向）
+function keplerPair(G, m1, m2, a, e) {
+  const M = m1 + m2, rp = a * (1 - e), vp = Math.sqrt(G * M * (1 + e) / (a * (1 - e)));
+  const f1 = m2 / M, f2 = m1 / M;
+  return { x1: [-f1 * rp, 0, 0], v1: [0, 0, f1 * vp], x2: [f2 * rp, 0, 0], v2: [0, 0, -f2 * vp], period: 2 * Math.PI * Math.sqrt(a * a * a / (G * M)) };
+}
+
+function sceneBinary() {
+  const sim = createSim({ dt: 0.002, epsB: 0, merge: false });
+  const k = keplerPair(1, 1, 0.5, 1.6, 0.55);
+  addBody(sim, k.x1, k.v1, 1, 0.09, 'sun');
+  addBody(sim, k.x2, k.v2, 0.5, 0.07, 'sun2');
+  sim.meta = { name: 'binary', period: k.period, a: 1.6, e: 0.55 };
+  return sim;
+}
+// 8の字の三体（Chenciner & Montgomery 2000、初期値は Simó による）
+function sceneFigure8() {
+  const sim = createSim({ dt: 0.001, epsB: 0, merge: false });
+  const p = [0.97000436, -0.24308753], v3 = [-0.93240737, -0.86473146];
+  const S = 1.4; // 見やすい大きさに拡大（G=1, m=1 のまま。時間は S^{3/2} 倍に伸びる）
+  const vs = 1 / Math.sqrt(S);
+  addBody(sim, [p[0] * S, 0, p[1] * S], [-v3[0] / 2 * vs, 0, -v3[1] / 2 * vs], 1, 0.06, 'blue');
+  addBody(sim, [-p[0] * S, 0, -p[1] * S], [-v3[0] / 2 * vs, 0, -v3[1] / 2 * vs], 1, 0.06, 'gold');
+  addBody(sim, [0, 0, 0], [v3[0] * vs, 0, v3[1] * vs], 1, 0.06, 'rose');
+  sim.meta = { name: 'figure8', period: 6.32591398 * Math.pow(S, 1.5), scale: S };
+  return sim;
+}
+// 恒星系：太陽と惑星（天体）＋小惑星帯（粒子）
+function sceneSolar(nAst, seed) {
+  const r = rng32(seed || 7);
+  const sim = createSim({ dt: 0.004, epsB: 0.01, epsP: 0.01, merge: true });
+  addBody(sim, [0, 0, 0], [0, 0, 0], 1, 0.14, 'sun');
+  const planets = [[0.55, 2e-6, 0.03, 'rock'], [0.85, 5e-6, 0.035, 'rock'], [1.25, 6e-6, 0.04, 'blue'], [1.7, 1e-6, 0.03, 'red'], [3.2, 9.5e-4, 0.09, 'giant'], [4.6, 2.8e-4, 0.08, 'ringed']];
+  for (const [a, m, rad, kind] of planets) {
+    const th = r() * Math.PI * 2, v = Math.sqrt(1 * 1 / a);
+    addBody(sim, [a * Math.cos(th), 0, a * Math.sin(th)], [-v * Math.sin(th), 0, v * Math.cos(th)], m, rad, kind);
+  }
+  const xs = [], vs = [], src = [];
+  for (let i = 0; i < nAst; i++) {
+    const a = 2.1 + r() * 0.9, e = r() * 0.08, th = r() * Math.PI * 2, inc = (r() - 0.5) * 0.08;
+    const rr = a * (1 - e * Math.cos(th * 1.3));
+    const v = Math.sqrt(1 * (2 / rr - 1 / a));
+    xs.push(rr * Math.cos(th), rr * Math.sin(inc) * 0.5, rr * Math.sin(th));
+    vs.push(-v * Math.sin(th), 0, v * Math.cos(th));
+    src.push(2);
+  }
+  setParticles(sim, xs, vs, src);
+  centerFrame(sim);
+  sim.meta = { name: 'solar' };
+  return sim;
+}
+// 銀河の衝突：二つの核（天体）と、その周りを回る円盤（粒子）。楕円軌道 e=0.5（Toomre & Toomre 1972 のアンテナ銀河と同じ型）
+function sceneGalaxies(nPer, seed) {
+  const r = rng32(seed || 11);
+  const sim = createSim({ dt: 0.01, epsB: 0.08, epsP: 0.08, merge: false });
+  const G = 1, m1 = 1, m2 = 1, M = m1 + m2;
+  const q = 1.3, e = 0.5, a = q / (1 - e);
+  // 遠点の近くから始める（真近点角 f0）
+  const f0 = 3.6; // 遠点を過ぎて近づきはじめた所（近点まで約6）
+  const p = a * (1 - e * e), rr = p / (1 + e * Math.cos(f0));
+  const h = Math.sqrt(G * M * p);
+  const vr = Math.sqrt(G * M / p) * e * Math.sin(f0), vt = h / rr;
+  // 相対ベクトル（xz 平面）。接近中なので vr を負に
+  const rel = [rr * Math.cos(f0), 0, rr * Math.sin(f0)];
+  const rhat = [Math.cos(f0), 0, Math.sin(f0)], that = [-Math.sin(f0), 0, Math.cos(f0)];
+  // f が増える向きへ進み、近点（f=2π）へ近づく
+  const vrel = [vr * rhat[0] + vt * that[0], 0, vr * rhat[2] + vt * that[2]];
+  const c1 = rel.map((v) => -v * m2 / M), c2 = rel.map((v) => v * m1 / M);
+  const w1 = vrel.map((v) => -v * m2 / M), w2 = vrel.map((v) => v * m1 / M);
+  addBody(sim, c1, w1, m1, 0.12, 'coreA');
+  addBody(sim, c2, w2, m2, 0.12, 'coreB');
+  const xs = [], vs = [], src = [];
+  const disk = (c, w, mc, tiltX, tiltZ, sense, id) => {
+    const cx = Math.cos(tiltX), sx = Math.sin(tiltX), cz = Math.cos(tiltZ), sz = Math.sin(tiltZ);
+    const rot = (v) => { let [x, y, z] = v; [y, z] = [y * cx - z * sx, y * sx + z * cx]; [x, y] = [x * cz - y * sz, x * sz + y * cz]; return [x, y, z]; };
+    for (let i = 0; i < nPer; i++) {
+      const R = 0.18 + Math.pow(r(), 0.75) * 0.95, th = r() * Math.PI * 2;
+      const vc = Math.sqrt(G * mc * R * R / Math.pow(R * R + sim.epsP * sim.epsP, 1.5));
+      const lp = rot([R * Math.cos(th), (r() - 0.5) * 0.02, R * Math.sin(th)]);
+      const lv = rot([-sense * vc * Math.sin(th), 0, sense * vc * Math.cos(th)]);
+      xs.push(c[0] + lp[0], c[1] + lp[1], c[2] + lp[2]);
+      vs.push(w[0] + lv[0], w[1] + lv[1], w[2] + lv[2]);
+      src.push(id);
+    }
+  };
+  // 軌道の回る向き（xz 面で +y 軸まわり）に合わせて A は順行、B は傾けた円盤
+  const orbitSense = Math.sign(rel[2] * vrel[0] - rel[0] * vrel[2]) || 1;
+  // 円盤の角運動量 L_y = −sense·R·v なので、順行にするには sense = −orbitSense
+  disk(c1, w1, m1, 0.0, 0.0, -orbitSense, 0);
+  disk(c2, w2, m2, 1.0, 0.5, -orbitSense, 1);
+  setParticles(sim, xs, vs, src);
+  sim.meta = { name: 'galaxies', q, e, a, period: 2 * Math.PI * Math.sqrt(a * a * a / (G * M)) };
+  return sim;
+}
+
+// ---- 検証試験 ----
+function runOrbitTests() {
+  const out = [];
+  const add = (id, name, pass, detail) => out.push({ id, name, status: pass ? 'pass' : 'fail', detail });
+  // O1 二体の周期と、刻み半減でのエネルギー誤差（2次精度）
+  try {
+    const run = (dtDiv, periods) => {
+      const sim = createSim({ dt: 1, epsB: 0 });
+      const k = keplerPair(1, 1, 0.5, 1.6, 0.55);
+      sim.dt = k.period / dtDiv;
+      addBody(sim, k.x1, k.v1, 1, 0, 's'); addBody(sim, k.x2, k.v2, 0.5, 0, 's');
+      const E0 = energy(sim), L0 = angMom(sim)[1];
+      let maxdE = 0, maxdL = 0, prevD = Infinity, prev2 = Infinity, peri = [];
+      const n = Math.round(periods * dtDiv);
+      for (let s = 0; s < n; s++) {
+        step(sim);
+        const d = Math.hypot(sim.bx[3] - sim.bx[0], sim.bx[4] - sim.bx[1], sim.bx[5] - sim.bx[2]);
+        if (prevD < prev2 && prevD < d) peri.push(sim.t - sim.dt);
+        prev2 = prevD; prevD = d;
+        maxdE = Math.max(maxdE, Math.abs((energy(sim) - E0) / E0));
+        maxdL = Math.max(maxdL, Math.abs((angMom(sim)[1] - L0) / L0));
+      }
+      const per = peri.length > 2 ? (peri[peri.length - 1] - peri[0]) / (peri.length - 1) : NaN;
+      return { maxdE, maxdL, perErr: Math.abs(per - k.period) / k.period };
+    };
+    const a = run(2000, 20), b = run(4000, 20);
+    const ratio = a.maxdE / b.maxdE;
+    add('O1', '二体：周期・2次精度', a.perErr < 2e-3 && ratio > 3.3 && ratio < 4.8, `周期の相対誤差 ${a.perErr.toExponential(1)}（刻みT/2000、近点時刻は刻み単位）／エネルギー誤差 ${a.maxdE.toExponential(1)}→${b.maxdE.toExponential(1)}（比 ${ratio.toFixed(2)}、理論 4）`);
+    add('O2', '二体：角運動量の保存', a.maxdL < 1e-12, `相対変化の最大 ${a.maxdL.toExponential(1)}（20周期）`);
+  } catch (e) { add('O1', '二体', false, String(e)); }
+  // O3 8の字三体：1周期後に元へ戻る
+  try {
+    const sim = createSim({ dt: 1e-3, epsB: 0 });
+    const p = [0.97000436, -0.24308753], v3 = [-0.93240737, -0.86473146];
+    addBody(sim, [p[0], 0, p[1]], [-v3[0] / 2, 0, -v3[1] / 2], 1, 0, 'a');
+    addBody(sim, [-p[0], 0, -p[1]], [-v3[0] / 2, 0, -v3[1] / 2], 1, 0, 'b');
+    addBody(sim, [0, 0, 0], [v3[0], 0, v3[1]], 1, 0, 'c');
+    const x0 = Array.from(sim.bx.subarray(0, 9)), E0 = energy(sim);
+    const T = 6.32591398, n = Math.round(T / sim.dt);
+    for (let s = 0; s < n; s++) step(sim);
+    let dev = 0; for (let i = 0; i < 9; i++) dev = Math.max(dev, Math.abs(sim.bx[i] - x0[i]));
+    const dE = Math.abs((energy(sim) - E0) / E0);
+    add('O3', '三体の8の字：1周期で戻る', dev < 2e-3 && dE < 1e-6, `位置のずれ最大 ${dev.toExponential(1)}、エネルギー誤差 ${dE.toExponential(1)}`);
+  } catch (e) { add('O3', '三体', false, String(e)); }
+  // O4 試験粒子の円軌道
+  try {
+    const sim = createSim({ dt: 0.005, epsB: 0, epsP: 0 });
+    addBody(sim, [0, 0, 0], [0, 0, 0], 1, 0, 'c');
+    setParticles(sim, [1, 0, 0], [0, 0, 1], [0]);
+    const n = Math.round(10 * 2 * Math.PI / sim.dt);
+    let dev = 0;
+    for (let s = 0; s < n; s++) { step(sim); dev = Math.max(dev, Math.abs(Math.hypot(sim.px[0], sim.px[1], sim.px[2]) - 1)); }
+    add('O4', '試験粒子の円軌道', dev < 1e-4, `半径のずれ最大 ${dev.toExponential(1)}（10周）`);
+  } catch (e) { add('O4', '試験粒子', false, String(e)); }
+  // O5 合体：質量・運動量の保存
+  try {
+    const sim = createSim({ dt: 0.001, epsB: 0, merge: true });
+    addBody(sim, [-0.05, 0, 0], [0.3, 0, 0.1], 1, 0.05, 'a'); addBody(sim, [0.05, 0, 0], [-0.2, 0, 0], 0.5, 0.05, 'b');
+    const p0 = [0.3 - 0.1, 0, 0.1];
+    step(sim);
+    const ok = sim.nb === 1 && Math.abs(sim.bm[0] - 1.5) < 1e-15 && Math.abs(sim.bv[0] * 1.5 - p0[0]) < 1e-9 && Math.abs(sim.bv[2] * 1.5 - p0[2]) < 1e-9;
+    add('O5', '合体：質量と運動量', ok, `天体数 ${sim.nb}、質量 ${sim.bm[0]}`);
+  } catch (e) { add('O5', '合体', false, String(e)); }
+  return out;
+}
+
+if (typeof module !== 'undefined') module.exports = { ORBIT_ENGINE_VERSION, createSim, addBody, setParticles, step, invalidate, energy, angMom, centerOfMass, centerFrame, predictPath, keplerPair, sceneBinary, sceneFigure8, sceneSolar, sceneGalaxies, runOrbitTests, rng32 };
+// ===== ENGINE END =====
+
+</script>
+<script>
+(() => {
+'use strict';
+const $ = (s) => document.querySelector(s);
+if (!window.THREE) { const d = document.createElement('div'); d.className = 'fatal'; d.textContent = '3D表示の読み込みに失敗しました。通信状況を確かめて、ページを開き直してください。'; document.body.appendChild(d); return; }
+
+// ---------------- 場面ごとの設定 ----------------
+const narrow = Math.min(innerWidth, innerHeight) < 700;
+const SCN = {
+  galaxies: { speed: 1.2, view: { pitch: 0.62, dist: 9.5 }, throwK: 0.55, throwM: 0.3, throwR: 0.1, throwKind: 'coreC', pullM: 0.9, pullEps: 0.25, predict: [700, 7], trailEvery: 4 },
+  solar:    { speed: 1.0, view: { pitch: 0.7, dist: 10.5 }, throwK: 0.4, throwM: 1e-3, throwR: 0.08, throwKind: 'giant', pullM: 0.06, pullEps: 0.15, predict: [1800, 18], trailEvery: 5 },
+  binary:   { speed: 1.0, view: { pitch: 0.75, dist: 6.2 }, throwK: 0.6, throwM: 0.02, throwR: 0.04, throwKind: 'rock', pullM: 0.4, pullEps: 0.15, predict: [3000, 30], trailEvery: 12 },
+  figure8:  { speed: 1.0, view: { pitch: 0.9, dist: 5.4 }, throwK: 0.6, throwM: 0.05, throwR: 0.04, throwKind: 'rock', pullM: 0.6, pullEps: 0.15, predict: [5000, 50], trailEvery: 20 },
+};
+const QN = { low: [1100, 700], mid: [narrow ? 1700 : 2400, 1400], high: [narrow ? 2600 : 3800, 2400] };
+const SPEED = { slow: 0.5, normal: 1, fast: 2 };
+const KIND = {
+  sun:   { col: [1.0, 0.86, 0.58], size: 1.25 }, sun2: { col: [0.72, 0.82, 1.0], size: 1.0 },
+  coreA: { col: [0.86, 0.92, 1.0], size: 1.25 }, coreB: { col: [1.0, 0.86, 0.66], size: 1.25 }, coreC: { col: [1.0, 0.72, 0.7], size: 0.9 },
+  rock:  { col: [0.86, 0.8, 0.72], size: 0.38 }, blue: { col: [0.55, 0.75, 1.0], size: 0.62 }, red: { col: [1.0, 0.6, 0.45], size: 0.42 },
+  giant: { col: [1.0, 0.82, 0.62], size: 0.72 }, ringed: { col: [0.98, 0.9, 0.7], size: 0.66 },
+  gold:  { col: [1.0, 0.82, 0.5], size: 0.72 }, rose: { col: [1.0, 0.62, 0.66], size: 0.72 }, thrown: { col: [1, 1, 1], size: 0.5 },
+};
+const PCOL = [[0.62, 0.74, 1.0], [1.0, 0.78, 0.55], [0.78, 0.72, 0.64]];
+const opt = { scene: 'galaxies', speed: 'normal', trail: true, q: 'mid' };
+try { Object.assign(opt, JSON.parse(localStorage.getItem('orbit.opt') || '{}')); } catch (e) {}
+if (!SCN[opt.scene]) opt.scene = 'galaxies';
+function saveOpt() { try { localStorage.setItem('orbit.opt', JSON.stringify(opt)); } catch (e) {} }
+
+// ---------------- three.js ----------------
+const canvas = $('#scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.setClearColor(0x03050a, 1);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 400);
+const pxU = { value: 600 };
+
+// 背景：天の川の帯と星
+{
+  const g = new THREE.SphereGeometry(200, 48, 24);
+  const m = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `varying vec3 vD;
+      float h(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719)))*43758.5453); }
+      float n3(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(mix(h(i),h(i+vec3(1,0,0)),f.x),mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x),f.y),
+                   mix(mix(h(i+vec3(0,0,1)),h(i+vec3(1,0,1)),f.x),mix(h(i+vec3(0,1,1)),h(i+vec3(1,1,1)),f.x),f.y),f.z); }
+      void main(){
+        vec3 n = normalize(vec3(0.35, 0.86, -0.37));
+        float b = dot(vD, n);
+        float band = exp(-b*b*14.0);
+        float cl = n3(vD*4.0)*0.6 + n3(vD*9.0)*0.3 + n3(vD*21.0)*0.1;
+        vec3 c = vec3(0.010,0.012,0.022) + band * (0.035 + 0.05*cl) * vec3(0.55,0.58,0.75);
+        c += band*band*smoothstep(0.55,0.8,cl)*vec3(0.05,0.04,0.035);
+        c -= band*smoothstep(0.55,0.75,n3(vD*6.0+3.0))*0.025;
+        gl_FragColor = vec4(max(c, vec3(0.0)), 1.0);
+      }`,
+  });
+  const s = new THREE.Mesh(g, m); s.renderOrder = -10; scene.add(s);
+  const n = 2600, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), sz = new Float32Array(n);
+  const r = rng32(2024);
+  for (let i = 0; i < n; i++) {
+    const u = r() * 2 - 1, th = r() * Math.PI * 2, s2 = Math.sqrt(1 - u * u);
+    pos.set([190 * s2 * Math.cos(th), 190 * u, 190 * s2 * Math.sin(th)], i * 3);
+    const tcol = r();
+    col.set(tcol < 0.2 ? [0.7, 0.8, 1.0] : tcol < 0.85 ? [1, 0.97, 0.92] : [1, 0.8, 0.6], i * 3);
+    sz[i] = 0.7 + Math.pow(r(), 7) * 3.0;
+  }
+  const bg = new THREE.BufferGeometry();
+  bg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); bg.setAttribute('color', new THREE.BufferAttribute(col, 3)); bg.setAttribute('aS', new THREE.BufferAttribute(sz, 1));
+  const bm = new THREE.ShaderMaterial({
+    uniforms: { uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
+    vertexShader: 'attribute float aS; uniform float uPR; varying vec3 vC; void main(){ vC = color; gl_PointSize = aS*uPR; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader: 'varying vec3 vC; void main(){ float d = length(gl_PointCoord-0.5)*2.0; gl_FragColor = vec4(vC*0.75*(1.0-smoothstep(0.2,1.0,d)),1.0); }',
+  });
+  const stars = new THREE.Points(bg, bm); stars.renderOrder = -9; scene.add(stars);
+}
+
+// 粒子（銀河の星・小惑星）
+const partMat = new THREE.ShaderMaterial({
+  uniforms: { uPx: pxU, uSize: { value: 0.03 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
+  vertexShader: 'uniform float uPx; uniform float uSize; varying vec3 vC; varying float vF; void main(){ vC = color; vec4 mv = modelViewMatrix*vec4(position,1.0); float s = uSize*uPx/max(0.05,-mv.z); vF = clamp(s/2.0, 0.25, 1.0); gl_PointSize = clamp(s, 1.6, 18.0); gl_Position = projectionMatrix*mv; }',
+  fragmentShader: 'varying vec3 vC; varying float vF; void main(){ float d = length(gl_PointCoord-0.5)*2.0; float a = exp(-d*d*4.0); gl_FragColor = vec4(vC*a*0.85*vF, 1.0); }',
+});
+let partPts = null, partPos = null;
+// 天体（光の核と暈）
+const bodyMat = new THREE.ShaderMaterial({
+  uniforms: { uPx: pxU }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
+  vertexShader: 'attribute float aS; uniform float uPx; varying vec3 vC; void main(){ vC = color; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_PointSize = clamp(aS*uPx/max(0.05,-mv.z), 6.0, 260.0); gl_Position = projectionMatrix*mv; }',
+  fragmentShader: 'varying vec3 vC; void main(){ float d = length(gl_PointCoord-0.5)*2.0; float core = exp(-d*d*60.0); float halo = exp(-d*d*7.0)*0.55 + exp(-d*3.2)*0.25; vec3 c = mix(vC, vec3(1.0), core*0.7); gl_FragColor = vec4(c*(core*1.6 + halo), 1.0); }',
+});
+const BCAP = 64;
+const bodyGeo = new THREE.BufferGeometry();
+bodyGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BCAP * 3), 3).setUsage(THREE.DynamicDrawUsage));
+bodyGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(BCAP * 3), 3).setUsage(THREE.DynamicDrawUsage));
+bodyGeo.setAttribute('aS', new THREE.BufferAttribute(new Float32Array(BCAP), 1).setUsage(THREE.DynamicDrawUsage));
+const bodyPts = new THREE.Points(bodyGeo, bodyMat); bodyPts.frustumCulled = false; bodyPts.renderOrder = 3; scene.add(bodyPts);
+// 指の重力
+const pullGeo = new THREE.BufferGeometry();
+pullGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+const pullMat = new THREE.ShaderMaterial({
+  uniforms: { uPx: pxU, uT: { value: 0 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: 'uniform float uPx; void main(){ vec4 mv = modelViewMatrix*vec4(position,1.0); gl_PointSize = clamp(1.4*uPx/max(0.05,-mv.z), 20.0, 300.0); gl_Position = projectionMatrix*mv; }',
+  fragmentShader: 'uniform float uT; void main(){ float d = length(gl_PointCoord-0.5)*2.0; float ring = exp(-pow((d-0.55-0.08*sin(uT*4.0))*9.0,2.0)); float ring2 = exp(-pow((d-0.25)*14.0,2.0))*0.5; float dark = smoothstep(0.18,0.0,d); vec3 c = vec3(0.75,0.68,1.0)*(ring*0.55+ring2) ; gl_FragColor = vec4(c*(1.0-dark), 1.0); }',
+});
+const pullPts = new THREE.Points(pullGeo, pullMat); pullPts.frustumCulled = false; pullPts.visible = false; scene.add(pullPts);
+// 投げる：予測の点線と、引いた線
+const predGeo = new THREE.BufferGeometry();
+predGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(600 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+const predPts = new THREE.Points(predGeo, new THREE.PointsMaterial({ color: 0xf1d9ab, size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0.75, depthWrite: false }));
+predPts.frustumCulled = false; predPts.visible = false; scene.add(predPts);
+const aimGeo = new THREE.BufferGeometry();
+aimGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+const aimLine = new THREE.Line(aimGeo, new THREE.LineBasicMaterial({ color: 0xf1d9ab, transparent: true, opacity: 0.5 }));
+aimLine.frustumCulled = false; aimLine.visible = false; scene.add(aimLine);
+// 軌跡
+const TRAIL_N = 420;
+const trails = new Map(); // id -> { buf, head, len, line }
+const trailMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+function trailFor(id, col) {
+  let t = trails.get(id);
+  if (!t) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    const line = new THREE.Line(g, trailMat); line.frustumCulled = false; scene.add(line);
+    t = { pts: [], col, line, seen: true }; trails.set(id, t);
+  }
+  t.seen = true;
+  return t;
+}
+function clearTrails() { for (const t of trails.values()) { scene.remove(t.line); t.line.geometry.dispose(); } trails.clear(); }
+
+// ---------------- 場面を作る ----------------
+let sim = null, S = null, E0 = 0, L0 = 0, peri = [], story0 = {};
+function build() {
+  S = SCN[opt.scene];
+  const [nG, nA] = QN[opt.q];
+  sim = opt.scene === 'galaxies' ? sceneGalaxies(nG, 11) : opt.scene === 'solar' ? sceneSolar(nA, 7) : opt.scene === 'binary' ? sceneBinary() : sceneFigure8();
+  if (partPts) { scene.remove(partPts); partPts.geometry.dispose(); partPts = null; }
+  if (sim.np) {
+    const g = new THREE.BufferGeometry();
+    partPos = new Float32Array(sim.np * 3);
+    const col = new Float32Array(sim.np * 3);
+    const r = rng32(99);
+    for (let k = 0; k < sim.np; k++) {
+      const c = PCOL[sim.psrc[k]], j = 0.8 + r() * 0.4;
+      col.set([c[0] * j, c[1] * j, c[2] * j], k * 3);
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(partPos, 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    partPts = new THREE.Points(g, partMat); partPts.frustumCulled = false; partPts.renderOrder = 2; scene.add(partPts);
+    partMat.uniforms.uSize.value = opt.scene === 'galaxies' ? 0.04 : 0.032;
+  }
+  clearTrails();
+  baseline();
+  peri = []; story0 = { sepPrev: Infinity, sepPrev2: Infinity, passes: 0, escaped: false, merges: 0 };
+  follow = null; acc = 0;
+  Object.assign(viewT, { yaw: viewT.yaw, pitch: S.view.pitch, dist: viewDist() });
+  $('#count').textContent = (sim.nb + sim.np).toLocaleString('ja-JP');
+}
+function viewDist() { return S.view.dist * (innerWidth < innerHeight ? 1.65 : 1); }
+function baseline() { E0 = energy(sim); L0 = angMom(sim)[1]; sim.events.length = 0; }
+
+// ---------------- カメラ ----------------
+const view = { yaw: 0.5, pitch: 0.6, dist: 9 }, viewT = { yaw: 0.5, pitch: 0.6, dist: 9 };
+const target = new THREE.Vector3(), targetT = new THREE.Vector3();
+let follow = null, lastInput = -99, nowS = 0;
+function applyCamera(dt) {
+  const k = 1 - Math.exp(-dt * 6);
+  if (nowS - lastInput > 6 && !paused) viewT.yaw += dt * 0.03;
+  view.yaw += (viewT.yaw - view.yaw) * k; view.pitch += (viewT.pitch - view.pitch) * k; view.dist += (viewT.dist - view.dist) * k;
+  targetT.set(0, 0, 0);
+  if (follow != null) { const i = bodyIndex(follow); if (i >= 0) targetT.set(sim.bx[i * 3], sim.bx[i * 3 + 1], sim.bx[i * 3 + 2]); else follow = null; }
+  target.lerp(targetT, 1 - Math.exp(-dt * 4));
+  const cp = Math.cos(view.pitch);
+  camera.position.set(target.x + view.dist * cp * Math.sin(view.yaw), target.y + view.dist * Math.sin(view.pitch), target.z + view.dist * cp * Math.cos(view.yaw));
+  camera.lookAt(target);
+}
+function clampView() { viewT.pitch = Math.max(-1.3, Math.min(1.45, viewT.pitch)); viewT.dist = Math.max(1.2, Math.min(40, viewT.dist)); }
+function rotateBy(dx, dy) { viewT.yaw -= dx * 0.005; viewT.pitch += dy * 0.005; clampView(); lastInput = nowS; }
+function zoomBy(f) { viewT.dist *= f; clampView(); lastInput = nowS; }
+function bodyIndex(id) { for (let i = 0; i < sim.nb; i++) if (sim.bid[i] === id) return i; return -1; }
+function planePoint(px, py) {
+  const rect = canvas.getBoundingClientRect();
+  const nd = new THREE.Vector2(((px - rect.left) / rect.width) * 2 - 1, -((py - rect.top) / rect.height) * 2 + 1);
+  const rc = new THREE.Raycaster(); rc.setFromCamera(nd, camera);
+  const pl = new THREE.Plane(new THREE.Vector3(0, 1, 0), -target.y);
+  const p = new THREE.Vector3();
+  const lim = view.dist * 2.5;
+  if (!rc.ray.intersectPlane(pl, p) || p.distanceTo(camera.position) > lim) {
+    // 真横から見ているときは、注視点の奥行きにある面で受ける
+    const n = new THREE.Vector3(); camera.getWorldDirection(n);
+    const pl2 = new THREE.Plane().setFromNormalAndCoplanarPoint(n, target);
+    rc.ray.intersectPlane(pl2, p);
+  }
+  return p;
+}
+function toScreen(x, y, z) {
+  const q = new THREE.Vector3(x, y, z).project(camera);
+  const rect = canvas.getBoundingClientRect();
+  return { x: (q.x * 0.5 + 0.5) * rect.width + rect.left, y: (-q.y * 0.5 + 0.5) * rect.height + rect.top, ok: q.z < 1 };
+}
+
+// ---------------- 投げる・引き寄せる ----------------
+let aim = null, predT = 0;
+function aimUpdate(p1) {
+  aim.p1 = p1;
+  const v = aimVel();
+  aimGeo.attributes.position.array.set([aim.p0.x, aim.p0.y, aim.p0.z, p1.x, p1.y, p1.z]); aimGeo.attributes.position.needsUpdate = true;
+  aimLine.visible = true;
+  if (performance.now() - predT > 50) {
+    predT = performance.now();
+    const path = predictPath(sim, [aim.p0.x, aim.p0.y, aim.p0.z], v, S.throwM, S.throwR, S.predict[0], S.predict[1]);
+    const arr = predGeo.attributes.position.array;
+    const n = Math.min(600, path.length / 3);
+    for (let i = 0; i < n * 3; i++) arr[i] = path[i];
+    predGeo.setDrawRange(0, n); predGeo.attributes.position.needsUpdate = true; predPts.visible = true;
+  }
+}
+function aimVel() { return [(aim.p1.x - aim.p0.x) * S.throwK, 0, (aim.p1.z - aim.p0.z) * S.throwK]; }
+function release() {
+  if (!aim) return;
+  const v = aimVel();
+  const i = addBody(sim, [aim.p0.x, aim.p0.y, aim.p0.z], v, S.throwM, S.throwR, S.throwKind);
+  if (i < 0) toast('これ以上は増やせません');
+  else { sim.merge = true; invalidate(sim); baseline(); $('#count').textContent = (sim.nb + sim.np).toLocaleString('ja-JP'); }
+  aim = null; aimLine.visible = false; predPts.visible = false;
+}
+function setPull(p) {
+  if (!p) { sim.ext = null; pullPts.visible = false; invalidate(sim); baseline(); return; }
+  sim.ext = { x: p.x, y: p.y, z: p.z, m: S.pullM, eps: S.pullEps };
+  pullGeo.attributes.position.array.set([p.x, p.y, p.z]); pullGeo.attributes.position.needsUpdate = true; pullPts.visible = true;
+  invalidate(sim);
+}
+
+// ---------------- 入力 ----------------
+let mode = 'view';
+const ptrs = new Map();
+let gesture = null, drag = null;
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('pointerdown', (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const wasGuide = !guide.hidden; hideGuide(); lastInput = nowS;
+  if (ptrs.size === 2) {
+    if (aim) { aim = null; aimLine.visible = false; predPts.visible = false; }
+    if (sim.ext) setPull(null);
+    const [a, b] = [...ptrs.values()];
+    gesture = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; drag = null; return;
+  }
+  if (ptrs.size > 2) return;
+  const rotateOnly = e.button === 2 || e.ctrlKey;
+  drag = { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, t0: performance.now(), rotate: rotateOnly || mode === 'view', moved: false, noPick: wasGuide };
+  if (!drag.rotate) {
+    const p = planePoint(e.clientX, e.clientY);
+    if (mode === 'throw') { aim = { p0: p.clone(), p1: p.clone() }; aimUpdate(p); }
+    else if (mode === 'pull') setPull(p);
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  lastInput = nowS;
+  if (gesture && ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (gesture.d > 0 && d > 0) zoomBy(gesture.d / d);
+    rotateBy(mx - gesture.mx, my - gesture.my);
+    gesture = { d, mx, my }; return;
+  }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 8) drag.moved = true;
+  if (drag.rotate) rotateBy(dx, dy);
+  else if (mode === 'throw' && aim) aimUpdate(planePoint(e.clientX, e.clientY));
+  else if (mode === 'pull' && sim.ext) setPull(planePoint(e.clientX, e.clientY));
+});
+function endPtr(e) {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if (ptrs.size < 2) gesture = null;
+  if (ptrs.size === 0) {
+    if (drag && !drag.rotate) { if (mode === 'throw') release(); else if (mode === 'pull') setPull(null); }
+    else if (drag && mode === 'view' && !drag.moved && !drag.noPick && performance.now() - drag.t0 < 400 && e.button !== 2) pickAt(e.clientX, e.clientY);
+    drag = null;
+  }
+}
+canvas.addEventListener('pointerup', endPtr);
+canvas.addEventListener('pointercancel', (e) => { if (aim) { aim = null; aimLine.visible = false; predPts.visible = false; } endPtr(e); });
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * 0.0012)); }, { passive: false });
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input')) return;
+  if (e.code === 'Space') { e.preventDefault(); setPaused(!paused); }
+  else if (e.key === '1') setMode('view'); else if (e.key === '2') setMode('throw'); else if (e.key === '3') setMode('pull');
+});
+function pickAt(px, py) {
+  let best = null, bd = 36;
+  for (let i = 0; i < sim.nb; i++) {
+    const s = toScreen(sim.bx[i * 3], sim.bx[i * 3 + 1], sim.bx[i * 3 + 2]);
+    if (!s.ok) continue;
+    const d = Math.hypot(s.x - px, s.y - py);
+    if (d < bd) { bd = d; best = sim.bid[i]; }
+  }
+  follow = best === follow ? null : best;
+  if (follow != null) toast('この星を追いかけます（もう一度タップで解除）');
+}
+const selRing = $('#selRing');
+function updateRing() {
+  const i = follow != null ? bodyIndex(follow) : -1;
+  if (i < 0) { selRing.hidden = true; return; }
+  const s = toScreen(sim.bx[i * 3], sim.bx[i * 3 + 1], sim.bx[i * 3 + 2]);
+  if (!s.ok) { selRing.hidden = true; return; }
+  selRing.hidden = false; selRing.style.transform = `translate(${s.x}px, ${s.y}px)`;
+}
+
+// ---------------- UI ----------------
+const HINTS = {
+  view: 'ドラッグで見回す。星をタップすると追いかけます',
+  throw: '指をすべらせた向きに星を投げます。離す前に行き先が見えます',
+  pull: '触れている間、指の先に重力が生まれます',
+};
+let hintTimer = 0;
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === m)));
+  const h = $('#hint'); h.textContent = HINTS[m]; h.classList.remove('fade');
+  clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.add('fade'), 4200);
+}
+document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.m)));
+let paused = false;
+function setPaused(v) {
+  paused = v;
+  $('#pausedChip').hidden = !v;
+  $('#btnPause').setAttribute('aria-pressed', String(v));
+  $('#btnPause').setAttribute('aria-label', v ? '再開' : '一時停止');
+  $('#pauseIcon').innerHTML = v ? '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>' : '<path d="M9 6v12M15 6v12"/>';
+}
+$('#btnPause').addEventListener('click', () => setPaused(!paused));
+let storyTimer = 0;
+function story(msg) { const s = $('#story'); s.textContent = msg; s.classList.remove('fade'); clearTimeout(storyTimer); storyTimer = setTimeout(() => s.classList.add('fade'), 4000); }
+let toastTimer = 0;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2200); }
+const guide = $('#guide');
+const GUIDE_TEXT = {
+  galaxies: '星は重力で引き合い、軌道を描きます。<br>二つの銀河が、もうすぐすれ違います。',
+  solar: '惑星は太陽の重力で回っています。<br>新しい星を投げ込んでみましょう。',
+  binary: '二つの星が、互いの重力で回り合います。',
+  figure8: '三つの星が、一本の8の字を追いかけ合います。<br>少しの乱れで、形はくずれます。',
+};
+function showGuide() { guide.innerHTML = GUIDE_TEXT[opt.scene] + '<span class="sub">ドラッグで見回す ／ 画面に触れると閉じます</span>'; guide.hidden = false; guide.classList.remove('fade'); }
+function hideGuide() { if (guide.hidden) return; guide.classList.add('fade'); setTimeout(() => { guide.hidden = true; }, 500); }
+
+const sheet = $('#sheet'), backdrop = $('#backdrop');
+function openSheet(v) { sheet.hidden = !v; backdrop.hidden = !v; }
+$('#btnSettings').addEventListener('click', () => openSheet(true));
+$('#btnClose').addEventListener('click', () => openSheet(false));
+backdrop.addEventListener('click', () => openSheet(false));
+function segInit(id, cur, onPick) {
+  const el = $(id);
+  const mark = (v) => el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(v))));
+  mark(cur);
+  el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mark(b.dataset.v); onPick(b.dataset.v); saveOpt(); });
+}
+segInit('#optScene', opt.scene, (v) => { opt.scene = v; build(); openSheet(false); showGuide(); });
+segInit('#optSpeed', opt.speed, (v) => { opt.speed = v; });
+segInit('#optQ', opt.q, (v) => { opt.q = v; build(); });
+const optTrail = $('#optTrail'); optTrail.checked = opt.trail;
+optTrail.addEventListener('change', () => { opt.trail = optTrail.checked; if (!opt.trail) clearTrails(); saveOpt(); });
+$('#btnResetView').addEventListener('click', () => { Object.assign(viewT, { yaw: 0.5, pitch: S.view.pitch, dist: viewDist() }); follow = null; openSheet(false); });
+$('#btnGuide').addEventListener('click', () => { openSheet(false); showGuide(); });
+$('#btnRestart').addEventListener('click', () => { build(); openSheet(false); });
+let verTaps = 0, verTimer = 0;
+$('#ver').addEventListener('click', () => { verTaps++; clearTimeout(verTimer); verTimer = setTimeout(() => { verTaps = 0; }, 1500); if (verTaps >= 5) { verTaps = 0; $('#devSec').hidden = false; runTestsOnce(); } });
+$('#btnDevHide').addEventListener('click', () => { $('#devSec').hidden = true; });
+$('#optDebug').addEventListener('change', (e) => { $('#debug').hidden = !e.target.checked; });
+let testsDone = false;
+function runTestsOnce() {
+  if (testsDone) return; testsDone = true;
+  $('#vlist').textContent = '実行中…';
+  setTimeout(() => {
+    const r = runOrbitTests();
+    $('#vlist').innerHTML = r.map((v) => `<div><b>${v.id} ${v.status === 'pass' ? '合格' : '不合格'}</b>　${v.name}<br>${v.detail}</div>`).join('');
+  }, 30);
+}
+
+// ---------------- 描画の更新 ----------------
+function syncBodies() {
+  const pos = bodyGeo.attributes.position.array, col = bodyGeo.attributes.color.array, sz = bodyGeo.attributes.aS.array;
+  for (let i = 0; i < sim.nb; i++) {
+    const k = KIND[sim.bkind[i]] || KIND.thrown;
+    pos[i * 3] = sim.bx[i * 3]; pos[i * 3 + 1] = sim.bx[i * 3 + 1]; pos[i * 3 + 2] = sim.bx[i * 3 + 2];
+    col.set(k.col, i * 3);
+    sz[i] = k.size * (opt.scene === 'galaxies' ? 0.55 : opt.scene === 'solar' ? 0.6 : 0.45);
+  }
+  bodyGeo.setDrawRange(0, sim.nb);
+  bodyGeo.attributes.position.needsUpdate = true; bodyGeo.attributes.color.needsUpdate = true; bodyGeo.attributes.aS.needsUpdate = true;
+  if (partPts) {
+    const n = sim.np * 3;
+    for (let i = 0; i < n; i++) partPos[i] = sim.px[i];
+    partPts.geometry.attributes.position.needsUpdate = true;
+  }
+}
+let trailTick = 0;
+function pushTrails() {
+  if (!opt.trail) return;
+  for (const t of trails.values()) t.seen = false;
+  for (let i = 0; i < sim.nb; i++) {
+    const k = KIND[sim.bkind[i]] || KIND.thrown;
+    if (opt.scene === 'solar' && sim.bkind[i] === 'sun') continue;
+    const t = trailFor(sim.bid[i], k.col);
+    t.pts.push(sim.bx[i * 3], sim.bx[i * 3 + 1], sim.bx[i * 3 + 2]);
+    if (t.pts.length > TRAIL_N * 3) t.pts.splice(0, 3);
+  }
+  for (const [id, t] of trails) if (!t.seen) { scene.remove(t.line); t.line.geometry.dispose(); trails.delete(id); }
+}
+function drawTrails() {
+  for (const t of trails.values()) {
+    const n = t.pts.length / 3, pos = t.line.geometry.attributes.position.array, col = t.line.geometry.attributes.color.array;
+    for (let i = 0; i < n; i++) {
+      pos[i * 3] = t.pts[i * 3]; pos[i * 3 + 1] = t.pts[i * 3 + 1]; pos[i * 3 + 2] = t.pts[i * 3 + 2];
+      const a = Math.pow(i / Math.max(1, n - 1), 1.6) * 0.55;
+      col[i * 3] = t.col[0] * a; col[i * 3 + 1] = t.col[1] * a; col[i * 3 + 2] = t.col[2] * a;
+    }
+    t.line.geometry.setDrawRange(0, n);
+    t.line.geometry.attributes.position.needsUpdate = true; t.line.geometry.attributes.color.needsUpdate = true;
+  }
+}
+function watchStory() {
+  if (opt.scene === 'galaxies') {
+    const a = bodyIndex(1), b = bodyIndex(2);
+    if (a >= 0 && b >= 0) {
+      const d = Math.hypot(sim.bx[a * 3] - sim.bx[b * 3], sim.bx[a * 3 + 1] - sim.bx[b * 3 + 1], sim.bx[a * 3 + 2] - sim.bx[b * 3 + 2]);
+      if (story0.sepPrev < story0.sepPrev2 && story0.sepPrev < d) { story0.passes++; story(story0.passes === 1 ? '二つの銀河がすれ違いました' : 'ふたたび近づきました'); }
+      story0.sepPrev2 = story0.sepPrev; story0.sepPrev = d;
+    }
+  }
+  if (opt.scene === 'figure8' && !story0.escaped) {
+    const c = centerOfMass(sim);
+    for (let i = 0; i < sim.nb; i++) if (Math.hypot(sim.bx[i * 3] - c.x[0], sim.bx[i * 3 + 2] - c.x[2]) > 7) { story0.escaped = true; story('星がひとつ飛び去りました'); break; }
+  }
+  if (sim.events.length > story0.merges) { story0.merges = sim.events.length; story('星がぶつかって、一つになりました'); }
+  if (opt.scene === 'binary' && sim.nb >= 2) {
+    const a = bodyIndex(1), b = bodyIndex(2);
+    if (a >= 0 && b >= 0) {
+      const d = Math.hypot(sim.bx[a * 3] - sim.bx[b * 3], sim.bx[a * 3 + 2] - sim.bx[b * 3 + 2]);
+      if (story0.sepPrev < story0.sepPrev2 && story0.sepPrev < d) peri.push(sim.t);
+      story0.sepPrev2 = story0.sepPrev; story0.sepPrev = d;
+    }
+  }
+}
+
+// ---------------- ループ ----------------
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.fov = w < h ? 62 : 50; camera.updateProjectionMatrix();
+  pxU.value = h * renderer.getPixelRatio() * 0.5 / Math.tan(camera.fov * Math.PI / 360);
+}
+addEventListener('resize', resize);
+let last = performance.now(), acc = 0, fpsAcc = 0, fpsN = 0, dbgT = 0;
+function frame(t) {
+  const dt = Math.min(0.1, (t - last) / 1000); last = t; nowS += dt;
+  pullMat.uniforms.uT.value = nowS;
+  if (!paused) {
+    acc += dt * S.speed * SPEED[opt.speed];
+    let n = Math.floor(acc / sim.dt);
+    if (n > 600) { n = 600; acc = 0; } else acc -= n * sim.dt;
+    for (let s = 0; s < n; s++) {
+      step(sim);
+      if (++trailTick % S.trailEvery === 0) pushTrails();
+      watchStory();
+    }
+    if (sim.nb + sim.np !== +($('#count').dataset.n || -1)) { $('#count').dataset.n = sim.nb + sim.np; $('#count').textContent = (sim.nb + sim.np).toLocaleString('ja-JP'); }
+  }
+  syncBodies();
+  if (opt.trail) drawTrails();
+  applyCamera(dt);
+  updateRing();
+  renderer.render(scene, camera);
+  fpsAcc += dt; fpsN++;
+  if (!$('#debug').hidden && t - dbgT > 250) {
+    dbgT = t;
+    const E = energy(sim), L = angMom(sim)[1];
+    $('#dScene').textContent = { galaxies: '銀河の衝突', solar: '恒星系', binary: '連星', figure8: '三体の8の字' }[opt.scene];
+    $('#dT').textContent = sim.t.toFixed(2); $('#dDt').textContent = sim.dt;
+    $('#dN').textContent = `${sim.nb}／${sim.np}`; $('#dEps').textContent = `${sim.epsB}／${sim.epsP}`;
+    $('#dE').textContent = E0 ? ((E - E0) / Math.abs(E0)).toExponential(2) : '-';
+    $('#dL').textContent = Math.abs(L0) > 1e-12 ? ((L - L0) / Math.abs(L0)).toExponential(2) : '-';
+    if (opt.scene === 'binary' && sim.meta.period) {
+      $('#dXk').textContent = '周期 測定／理論';
+      const m = peri.length > 1 ? (peri[peri.length - 1] - peri[0]) / (peri.length - 1) : null;
+      $('#dX').textContent = `${m ? m.toFixed(4) : '…'}／${sim.meta.period.toFixed(4)}`;
+    } else if (opt.scene === 'galaxies') {
+      $('#dXk').textContent = '核の距離';
+      $('#dX').textContent = Number.isFinite(story0.sepPrev) ? story0.sepPrev.toFixed(3) : '-';
+    } else { $('#dXk').textContent = '重心のずれ'; const c = centerOfMass(sim); $('#dX').textContent = Math.hypot(...c.x).toExponential(1); }
+    $('#dFps').textContent = (fpsN / fpsAcc).toFixed(0); fpsAcc = 0; fpsN = 0;
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------------- 起動 ----------------
+resize();
+build();
+view.pitch = viewT.pitch; view.dist = viewT.dist;
+applyCamera(1);
+showGuide();
+requestAnimationFrame((tt) => { last = tt; frame(tt); });
+window.__orbit = { get sim() { return sim; }, setMode, build, opt };
+})();
+</script>
+</body></html>
