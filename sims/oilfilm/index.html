@@ -1,0 +1,1631 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OIL FILM"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>OIL FILM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!--
+  OIL FILM 油膜シミュレータ  v0.9「CONNECT · CUT · STRETCH」
+  準拠：OIL FILM 詳細設計書 v0.2（操作仕様）。計算は v0.3 で輪郭モデルに変更
+  モデル：油のしずくの輪郭（点の輪）だけを追う。界面張力（線張力）・面積の保存・油の粘り・汁の抵抗・
+          しずく同士の汁の膜（押し返しと、接触が続くと合体）・くびれでの分裂・箸（円い固体と付着）
+
+  更新履歴
+  v0.9 2026-11-07  押しつぶされたしずくが不自然な形のまま固まる不具合を修正（エンジン v0.9）：
+                   小さな粒は動きは丸ごとのまま、形は丸に戻す（すき間に押し込まれた三角形のまま残らない）。
+                   止めるのは丸いしずくだけ（つぶれた形では止めない）。描画では、止まりかけた輪郭の細かな揺れだけをならす
+  v0.8 2026-11-07  箸の当たり判定を小さく（半径 12→8 px）。箸で押しつけただけでは合体しない（箸の膜が両方に触れたときだけ）。
+                   密集した粒の震え対策（エンジン v0.8）：圧力の補正で運動量が変わらないように、小さな粒は変形させずに動かし、
+                   落ち着いたしずくは止める（箸が近づくか、速いしずくに押されると動き出す）
+  v0.7 2026-11-07  寄り添ったしずくがもっと近づき、弱く押し合って接したところが少し平らに（エンジン v0.7）。
+                   光沢の映り込みをやめ、輪郭の線を細く。触れたときの波紋をやめた
+  v0.6 2026-11-07  縁に押しつけたしずくが震え続ける不具合を修正（点の質量の重みをそろえ、点の偏りを直し、縁をやわらかい押し返しに。エンジン v0.6）。
+                   油に光沢（中心が濃い塗りと、左上からの光の映り込み）。油の色を選べるように（琥珀・ラー油・真珠・金）。
+                   しずくの並びをこの端末に保存し、次に開いたときに続きから。戻るボタンは2回で閉じる
+  v0.5 2026-11-07  箸が関わらないかぎり、しずく同士は合体しない（重なったら押し離す）。
+                   しずく同士・しずくと画面の縁がゆるく引き合う（浮いたもの同士が寄るチェリオス効果の近似）。
+                   ねじれた輪郭（自己交差）をほどく処理と、1刻みで動ける距離の上限を追加（エンジン v0.5）
+  v0.4 2026-11-07  箸を「立てた箸の先（油で濡れている）」として扱うように（エンジン v0.4）。
+                   ゆっくり触れたしずくは箸の油の膜とつながり、2つ以上つながると箸を通して1つになる。
+                   重なったしずくは1つにまとめる。ぶつかったときの弾みを抑え、汁の抵抗を上げて滑りすぎないように
+  v0.3 2026-11-07  計算を「格子の流体」から「油の輪郭だけ」に作り直した（エンジン v0.3）。1コマの計算は約1ms（v0.2 の約1/7）。
+                   描画も輪郭の線と薄い塗りだけに。速くぶつけると弾き、ゆっくり押しつけると合体する。速く引くとちぎれる
+  v0.2 2026-11-07  油のねばつきを解消：界面張力を約150倍に強め、下の水への摩擦を上げた（エンジン v0.2）。
+                   切る相手の帯は画面の端から端へ渡す形に（壁に接していないと、すぐ丸まってしまうため）。
+                   格子を1.5倍・2倍にしても、つなぐ・切る・引くの結果が変わらないことを確認（v0.1 の限界を解消）
+  v0.1 2026-11-07  初版。暗い液面に油膜の島。モード切替なしの一本指で「つなぐ・外から切る・中から引く」。
+                   3つの違いは同じ計算から生じる（判定はトポロジーを変えない。記録と表示だけ）。
+                   並べ方（いろいろ／練習）、指先の円の表示、裏モード（開発者表示・位相場の表示・検証14件・成否の記録）
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Unbounded:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
+<style>
+/* Layout: 全画面の液面（真上から）に、上端の細い情報帯と下端のひと言だけを浮かべる。シリーズ共通の構成で、UI は意図的にダーク固定。モード切替はない。 */
+:root {
+  --bg: #091113;
+  --glass: rgba(9, 17, 19, 0.58);
+  --glass-strong: rgba(8, 15, 17, 0.93);
+  --line: rgba(214, 228, 222, 0.16);
+  --ink: #e8eee9;
+  --mute: #98aaa4;
+  --amber: #e3b86c;
+  --amber-ink: #22190a;
+  --sheen: #b9dcd6;
+  --f-mark: "Unbounded", "Zen Kaku Gothic New", system-ui, sans-serif;
+  --f-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 14px;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px;
+  overflow: hidden; overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 52%, rgba(0, 4, 5, 0.55) 100%); }
+
+.top {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mark { font-family: var(--f-mark); font-weight: 600; font-size: 14px; letter-spacing: 0.28em; color: var(--ink); opacity: 0.95; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,.45); }
+.count-chip {
+  display: flex; align-items: baseline; gap: 5px; padding: 5px 11px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line); white-space: nowrap;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.count-chip small { font-size: 11px; color: var(--mute); }
+.count-chip b { font-family: var(--f-num); font-weight: 500; font-variant-numeric: tabular-nums; font-size: 14px; color: var(--amber); }
+.count-chip.pulse { animation: pulse .5s ease-out; }
+@keyframes pulse { from { transform: scale(1.14); } to { transform: scale(1); } }
+.top .spacer { flex: 1; min-width: 0; }
+.icon-btn {
+  pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; border: 1px solid var(--line);
+  background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); cursor: pointer;
+}
+.icon-btn svg { width: 20px; height: 20px; }
+
+.story, .paused-chip {
+  position: fixed; z-index: 5; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + 70px); pointer-events: none; white-space: nowrap; max-width: calc(100% - 32px);
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--glass); font-size: 12px; letter-spacing: 0.06em; transition: opacity 1.2s;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); overflow: hidden; text-overflow: ellipsis;
+}
+.story { color: var(--amber); }
+.story.fade { opacity: 0; }
+.paused-chip { color: var(--sheen); top: calc(env(safe-area-inset-top, 0px) + 110px); }
+
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mode-hint {
+  max-width: 100%; padding: 7px 16px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line); color: var(--ink);
+  font-size: clamp(10.5px, 3.05vw, 12px); line-height: 1.6; letter-spacing: 0.02em; text-align: center; transition: opacity .8s; white-space: nowrap;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.mode-hint.fade { opacity: 0; }
+
+.guide {
+  position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 4;
+  width: min(calc(100% - 48px), 320px); padding: 18px 20px; border-radius: var(--r);
+  background: var(--glass); border: 1px solid var(--line); text-align: center;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  pointer-events: none; line-height: 1.9; font-size: 14px; transition: opacity .5s;
+}
+.guide .sub { display: block; margin-top: 6px; font-size: 11px; color: var(--mute); }
+.guide.fade { opacity: 0; }
+.fatal { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--mute); z-index: 2; }
+.ripple { position: fixed; z-index: 3; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 1.2px solid rgba(185, 220, 214, 0.55); pointer-events: none; animation: ripple .9s ease-out forwards; }
+@keyframes ripple { from { transform: scale(1); opacity: 0.9; } to { transform: scale(4.5); opacity: 0; } }
+
+.backdrop { position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.42); }
+.sheet {
+  position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 10;
+  width: min(100%, 440px); max-height: 84%; overflow-y: auto;
+  padding: 18px max(18px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 18px) max(18px, env(safe-area-inset-left, 0px));
+  border-radius: 20px 20px 0 0; background: var(--glass-strong);
+  border: 1px solid var(--line); border-bottom: 0;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  -webkit-user-select: text; user-select: text;
+}
+.sheet h2 { margin: 0 0 4px; font-family: var(--f-mark); font-weight: 400; font-size: 13px; letter-spacing: 0.24em; color: var(--mute); }
+.sheet .sub-h { margin: 18px 0 0; }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.row .lbl { flex: 1; min-width: 0; }
+.row .lbl small { display: block; color: var(--mute); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+.switch { position: relative; width: 48px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(214, 228, 222, 0.16); transition: background .2s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); transition: transform .2s; }
+.switch input:checked + span { background: var(--amber); }
+.switch input:checked + span::after { transform: translateX(20px); background: var(--amber-ink); }
+.switch input:focus-visible + span { outline: 2px solid var(--amber); outline-offset: 2px; }
+.seg { display: flex; gap: 4px; padding: 3px; border-radius: 10px; border: 1px solid var(--line); flex: none; }
+.seg button { border: 0; background: transparent; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--mute); cursor: pointer; min-height: 32px; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--amber); color: var(--amber-ink); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 14px 0 4px; }
+.chip { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: rgba(214, 228, 222, 0.05); cursor: pointer; font-size: 13px; }
+.ver { margin-top: 14px; font-size: 11px; color: var(--mute); line-height: 1.75; }
+.ver b { font-family: var(--f-num); font-weight: 500; color: var(--ink); }
+#ver { -webkit-user-select: none; user-select: none; }
+.hist { padding: 12px 0 0; }
+.hist summary { cursor: pointer; font-size: 13px; color: var(--mute); }
+.vlist { display: grid; gap: 7px; padding: 8px 0; font-size: 11.5px; color: var(--mute); line-height: 1.55; }
+.vlist b { color: var(--ink); font-family: var(--f-num); font-weight: 500; }
+.vlist .ng b { color: #f0907a; }
+.vlist .info b { color: var(--sheen); }
+.map { font-family: var(--f-num); font-size: 11px; line-height: 1.6; color: var(--mute); white-space: pre; overflow-x: auto; padding: 6px 0; }
+.map em { font-style: normal; color: var(--ink); }
+
+.debug {
+  position: fixed; z-index: 6; left: max(10px, env(safe-area-inset-left, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 62px);
+  width: min(calc(100% - 20px), 250px); padding: 10px 12px; border-radius: 12px;
+  background: var(--glass-strong); border: 1px solid var(--line);
+  font-family: var(--f-num); font-size: 11px; line-height: 1.55; pointer-events: none;
+}
+.debug dl { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; margin: 0; }
+.debug dt { color: var(--mute); font-family: var(--f-ui); }
+.debug dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 330px) { .count-chip small { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .guide, .mode-hint, .story, .switch span, .switch span::after { transition: none; }
+  .ripple, .count-chip.pulse { animation-duration: .01s; }
+}
+</style>
+
+<canvas id="scene" aria-label="真上から見た暗い液面と、浮かぶ油膜の島"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="top">
+  <span class="mark">OIL FILM</span>
+  <span class="count-chip" id="islChip" aria-live="polite"><small>しずく</small><b id="islN">0</b></span>
+  <span class="spacer"></span>
+  <button class="icon-btn" id="btnPause" aria-label="一時停止" aria-pressed="false" title="一時停止（Space）">
+    <svg id="pauseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6v12M15 6v12"/></svg>
+  </button>
+  <button class="icon-btn" id="btnSettings" aria-label="設定">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
+  </button>
+</header>
+
+<div class="story fade" id="story" aria-live="polite"></div>
+<div class="paused-chip" id="pausedChip" hidden>一時停止中</div>
+<div class="guide" id="guide" hidden></div>
+
+<aside class="debug" id="debug" hidden>
+  <dl id="dbg"></dl>
+</aside>
+
+<div class="bottom">
+  <div class="mode-hint fade" id="hint">そっと触れてつなぐ。外から速く横切る。中から速く引く。</div>
+</div>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<section class="sheet" id="sheet" hidden aria-label="設定">
+  <h2>SETTINGS</h2>
+  <div class="row">
+    <div class="lbl">並べ方<small>「練習」は、近い2つのしずく・小さなしずく・大きなしずくを並べます。つなぐ・切る・引くを試しやすい配置です。</small></div>
+    <div class="seg" id="optScene"><button data-v="mix" aria-pressed="true">いろいろ</button><button data-v="practice" aria-pressed="false">練習</button></div>
+  </div>
+  <div class="row">
+    <div class="lbl">油の色<small>琥珀は豚の脂、ラー油は唐辛子の油、真珠は透きとおった油のイメージです。</small></div>
+    <div class="seg" id="optColor"><button data-v="amber" aria-pressed="true">琥珀</button><button data-v="chili" aria-pressed="false">ラー油</button><button data-v="pearl" aria-pressed="false">真珠</button><button data-v="gold" aria-pressed="false">金</button></div>
+  </div>
+  <div class="row">
+    <div class="lbl">箸の先を表示<small>触れているあいだ、計算に入れている箸の先の大きさを薄い円で出します。</small></div>
+    <label class="switch"><input type="checkbox" id="optRing" aria-label="箸の先を表示"><span></span></label>
+  </div>
+  <div class="btn-row">
+    <button class="chip" id="btnScatter">並べ直す</button>
+    <button class="chip" id="btnRestart">最初の形に戻す</button>
+    <button class="chip" id="btnGuide">ガイドを再表示</button>
+    <button class="chip" id="btnClose">閉じる</button>
+  </div>
+  <section id="devSec" hidden aria-label="裏モード">
+    <h2 class="sub-h">DEVELOPER</h2>
+    <div class="row">
+      <div class="lbl">開発者表示<small>しずくの数、輪郭の点の数、油の量とその誤差、消えた粒、計算時間、最後の操作の判定を左上に出します。</small></div>
+      <label class="switch"><input type="checkbox" id="optDebug" aria-label="開発者表示"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="lbl">輪郭の点を表示<small>計算している点（しずくの輪郭の点）を小さな丸で出します。</small></div>
+      <label class="switch"><input type="checkbox" id="optRaw" aria-label="輪郭の点を表示"><span></span></label>
+    </div>
+    <details class="hist" id="testBox">
+      <summary>エンジンの検証（開くとこのブラウザで実行。数秒かかります）</summary>
+      <div class="vlist" id="vlist"></div>
+    </details>
+    <details class="hist">
+      <summary>この版で決めた規則</summary>
+      <div class="map" id="sweepMap"></div>
+    </details>
+    <details class="hist">
+      <summary>更新履歴</summary>
+      <p class="ver">v0.9（2026-11-07）押しつぶされたしずくが三角や角ばった形のまま固まる不具合を修正。小さな粒は丸に戻り、止めるのは丸いしずくだけ。止まりかけの輪郭の細かな揺れは描画でならす</p>
+      <p class="ver">v0.8（2026-11-07）箸の当たり判定を小さく。押しつけただけでは合体しない。密集した粒が震えないように（小さな粒は変形させず、落ち着いたしずくは止める）</p>
+      <p class="ver">v0.7（2026-11-07）寄り添ったしずくがもっと近づき、接したところが少し平らに。光沢の映り込みと波紋をやめ、線を細く</p>
+      <p class="ver">v0.6（2026-11-07）縁で震え続ける不具合を修正。油に光沢、色を選べるように。並びを保存して続きから。戻るボタンは2回で閉じる</p>
+      <p class="ver">v0.5（2026-11-07）箸が関わらないと合体しない（重なったら押し離す）。しずく同士・縁とゆるく引き合う。輪郭のねじれをほどく</p>
+      <p class="ver">v0.4（2026-11-07）箸の先は油で濡れている扱いに。ゆっくり触れたしずくは箸につながり、箸を通して1つになる。重なったしずくは1つに。弾みと滑りを抑えた</p>
+      <p class="ver">v0.3（2026-11-07）計算を油の輪郭だけに作り直し、描画も輪郭の線に。1コマの計算は約1ms。速くぶつけると弾き、ゆっくり押しつけると合体、速く引くとちぎれる</p>
+      <p class="ver">v0.2（2026-11-07）ねばつきを解消：界面張力を強め、膜がすぐ丸くなるように。切る相手の帯は端から端へ渡す形に。格子を細かくしても3操作の結果が同じになった</p>
+      <p class="ver">v0.1（2026-11-07）初版：暗い液面に油膜の島。一本指で、つなぐ・外から切る・中から引く。並べ方（いろいろ／練習）、指先の円、裏モード（開発者表示・位相場の表示・検証・成否の記録）</p>
+    </details>
+    <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
+  </section>
+  <p class="ver" id="ver"><b>OIL FILM v0.9</b> CONNECT · CUT · STRETCH<br>
+  油のしずくの輪郭だけを、点の輪として計算しています。点を引き寄せる界面張力がしずくを丸くし、輪郭が囲む面積を毎回そろえて油の量を保ちます。しずくの間にはさまった汁の膜が押し返すので、ぶつけると軽く弾き、重なりかけても押し離します。箸が関わらないかぎり、しずく同士は合体しません。近くのしずく同士や画面の縁とは、ゆるく引き合って寄り添います（液面に浮いたもの同士が寄り合う、チェリオス効果と呼ばれる現象の近似）。寄り添ったしずくは弱く押し合い、接したところが少し平らになります。輪郭どうしが油をはさんで近づくと、そこで2つに分かれます。<br>
+  指は、汁に立てた箸の先です。先には油の膜が付いています。ゆっくり触れたしずくは箸の膜とつながって一緒に動き、2つ以上つながると箸を通して1つになります。速く動かした箸は膜とつながらず、外から横切るとしずくを切ります。<br>
+  この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
+</section>
+
+<script>
+/* =====================================================================
+ * OIL FILM contour engine  v0.9
+ *   描画非依存。Node でも単体実行できる（検証用）。単位は画面の px と秒。
+ *
+ *   v0.9 2026-11-07  押しつぶされた形のまま固まる不具合を修正：半径 11 px 未満のしずくも形は 0.08 秒で丸へ戻す
+ *                    （丸ごと動かすだけだと、すき間に押し込まれた三角形のまま残った。相手と接している点は外へ押し出さない）。眠らせるのは丸いしずくだけ
+ *                    （周長が同じ面積の円の 1.03 倍未満）。眠りの判定のならし速度は位置を進める前に計算。
+ *   v0.8 2026-11-07  箸の半径 12→8 px、触れる判定を 1.5 px に。押しつけただけの合体をやめた（箸の膜が両方に触れたときだけ）。
+ *                    震え対策：圧力の補正で運動量を変えない、半径 11 px 未満は変形させずに動かす、落ち着いたしずくは眠らせる。
+ *                    重なりの押し出しで余分に押し出さない（0.3 px）。
+ *   v0.7 2026-11-07  寄り添ったしずくがもっと近づき（汁の膜 6→2.5 px）、触れたあとも弱く押し合って接したところが少し平らになる。
+ *                    点どうしの力を点の質量で割る（運動量を保つ）。箸につながっていないしずくは、輪郭に沿った点の動きを消す
+ *                    （押し合ったしずくの点が回り続けないように）。界面張力 14000→9000。点を等間隔へ寄せる処理はやめた。
+ *   v0.6 2026-11-07  縁で震え続ける不具合を修正：点の質量（受け持つ長さ）で平均をとる、点を輪郭に沿って等間隔へ寄せる、
+ *                    縁は硬い壁でなくやわらかい押し返しに。引き合いは輪郭の実際のすき間で決め、触れる手前でなめらかに 0 に。
+ *   v0.5 2026-11-07  箸が関わらないかぎり合体しない（重なりは押し離す）。しずく同士・縁との引き合い。
+ *                    輪郭のねじれ（自己交差）をほどく。1刻みで動ける距離の上限。
+ *   v0.4 2026-11-07  箸の先は油で濡れている扱いに：ゆっくり触れたしずくは箸につながり、2つ以上なら箸を通して1つになる。
+ *                    重なったしずくは1つにまとめる。ぶつかった点どうしの速さをそろえて弾みを抑え、汁の抵抗を上げた。
+ *   v0.3 2026-11-07  格子の流体計算をやめ、油のしずくの「輪郭」だけを計算する方式に作り直した。
+ *
+ *   モデル（輪郭追跡。しずくの中と外の流れは解かない）
+ *   - しずく：閉じた点の輪（反時計回り）。点は質量をもち、速度で動く。
+ *   - 界面張力：各点に、隣の2点へ向かう単位ベクトルの和 × S / 点の受け持つ長さ。
+ *       （周長を縮める力。曲率 κ に比例し、しずくを丸くする）
+ *   - 面積の保存：毎刻み、面積の不足分だけ点を法線方向に一様に動かす（油の量が厳密に保たれる）。
+ *   - 油の粘り：各点の速度を、そのしずくの平均速度へ β の速さで近づける（変形だけが減衰し、運動量は保たれる）。
+ *   - 汁の抵抗：速度を c の速さで減らす。
+ *   - しずく同士：輪郭が d_rep より近づくと押し返す（間の汁の膜）。
+ *       d_touch より近い状態が T_drain 秒続くと、膜が抜けて合体する。速くぶつかると弾く。
+ *   - くびれ：同じしずくの輪郭どうしが、油をはさんで d_pinch より近づくと、そこで2つに分かれる。
+ *   - 箸：半径 R の円い固体。輪郭の点は円の中に入れない。箸の先がしずくの中にあるときだけ、
+ *       そのしずくの近くの点は箸に付いて動く（油は箸を濡らす）。
+ *   「つなぐ／切る／引く」を判定してトポロジーを変えることはしない。上の規則だけから生じる。
+ * ===================================================================== */
+(function (root) {
+  'use strict';
+
+  var ENGINE_VERSION = '0.9';
+
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
+
+  var DEFAULTS = {
+    S: 9000,        // 界面張力（px³/s²）。大きいほど速く丸くなる
+    beta: 0.3,       // しずく全体の速度へそろえる速さ（1/s）。油の中を伝わる圧力の近似
+    nuL: 30,         // 輪郭に沿った粘り（1/s）。隣の点と速度をならす
+    c: 4.0,          // 汁の抵抗（1/s）。小さいほど遠くまで滑る
+    kDamp: 25,       // ぶつかったしずく同士の速さをそろえる速さ（1/s）。弾み方を抑える
+    h0: 6,           // 点の間隔の目安（px）
+    hMin: 3.2, hMax: 9,
+    dRep: 2.5,       // しずく同士が押し返し始める距離（px。間の汁の膜の厚み）
+    kRep: 3000,
+    dWall: 2.5,      // 画面の縁が押し返し始める距離（px）      // 押し返しの強さ（px/s²）
+    dTouch: 2.3,     // 接触とみなす距離（px）
+    tDrain: 0.22,    // 接触が続くと合体するまでの時間（s）
+    dPinch: 5,       // 油をはさんだ輪郭がこれより近いと分かれる（px）
+    devTear: 120,    // 変形の速さ（px/s）がこれを超え、
+    aTear: 2.0,      // 縦横比がこれを超えると、いちばん細い所で切れる（厚みのある油の糸が切れやすいことの近似）
+    minPiece: 300,   // 切れるとき、小さいほうの片の最小の面積（px²）
+    tipR: 8,        // 箸の先の半径（px）
+    adhere: 150,       // 箸に付いた油が箸の速さにそろう速さ（1/s）
+    grab: 30,        // 箸のまわりの油が箸の速さにそろう速さ（1/s）
+    grabL: 14,       // その届く距離（箸の表面から、px）
+    adhereRange: 2,  // 付着が効く、箸の表面からの距離（px）
+    tWet: 0.06,      // 箸の油の膜としずくがつながるまでの接触時間（s）
+    vWet: 150,       // 箸がこれより速いと、触れてもつながらない（px/s）
+    rRigid: 11,      // これより小さい（半径 px）しずくは変形させずに動かす
+    vSleep: 1.5,     // 点の速度をならした値がこれより小さい状態が
+    tSleep: 0.5,     // この時間（s）続いたしずくは眠る（止めて、押し合いの細かな震えを消す）
+    tAvg: 0.25,      // 速度をならす時間（s）
+    vWake: 25,       // これより速い点に触れられたら起きる（px/s）
+    sleepRound: 1.03, // これより丸いしずくだけ眠らせる（つぶれた形のまま固まらないように）
+    tRound: 0.08,    // 小さなしずくが丸に戻る時間（s）
+    pressMerge: false, // 箸で押しつけたしずくが隣と合体するか（v0.8 でやめた。つながるのは箸の膜に両方が触れたときだけ）
+    press: 1,        // 触れたあとも残す引き合いの割合（0〜1）。押し合って、接したところが少し平らになる
+    gAtt: 40,        // しずく同士・しずくと縁が引き合う強さ（px/s²）。浮いたもの同士が寄るチェリオス効果の近似
+    lAtt: 14,        // その届く距離（px。毛管長に当たる）
+    minArea: 70      // これより小さい粒は消える（px²。消えた量は記録する）
+  };
+
+  var nextId = 1;
+  function Drop(xs, ys, A0) {
+    this.id = nextId++;
+    this.x = xs; this.y = ys;
+    this.vx = new Array(xs.length).fill(0); this.vy = new Array(xs.length).fill(0);
+    this.A0 = A0 == null ? polyArea(xs, ys) : A0;
+    this.calm = 0;      // 合体直後は、細い橋がすぐ太るまでくびれで切らない（秒）
+  }
+  function polyArea(x, y) {
+    var n = x.length, s = 0;
+    for (var i = 0, j = n - 1; i < n; j = i++) s += x[j] * y[i] - x[i] * y[j];
+    return 0.5 * s;
+  }
+  function perimeter(x, y) {
+    var n = x.length, s = 0;
+    for (var i = 0, j = n - 1; i < n; j = i++) s += Math.hypot(x[i] - x[j], y[i] - y[j]);
+    return s;
+  }
+  function inside(d, px, py) {
+    var x = d.x, y = d.y, n = x.length, c = false;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      if ((y[i] > py) !== (y[j] > py) && px < (x[j] - x[i]) * (py - y[i]) / (y[j] - y[i]) + x[i]) c = !c;
+    }
+    return c;
+  }
+  // 外向きの法線（面積が正＝この座標系での向きに対して）
+  function normalAt(d, i) {
+    var n = d.x.length, a = (i + n - 1) % n, b = (i + 1) % n;
+    var tx = d.x[b] - d.x[a], ty = d.y[b] - d.y[a], L = Math.hypot(tx, ty) || 1;
+    return [ty / L, -tx / L];
+  }
+
+  /* ------------------------------------------------------------------ */
+  function World(w, h, params) {
+    this.w = w; this.h = h;
+    this.p = {}; var k;
+    for (k in DEFAULTS) this.p[k] = DEFAULTS[k];
+    if (params) for (k in params) this.p[k] = params[k];
+    this.drops = [];
+    this.tip = { on: false, x: 0, y: 0, vx: 0, vy: 0, r: this.p.tipR, holder: 0, wet: false };
+    this.att = {};               // 箸の油の膜とつながっているしずく（id → 1）
+    this.tipTime = {};           // 箸に触れている時間（id → s）
+    this.contacts = {};          // "idA:idB" → 接触の累積時間
+    this.time = 0; this.steps = 0;
+    this.lostArea = 0;
+    this.events = [];            // {t, type:'merge'|'split'}
+  }
+
+  World.prototype.addCircle = function (cx, cy, r, harm) {
+    var n = Math.max(10, Math.round(2 * Math.PI * r / this.p.h0));
+    var xs = [], ys = [];
+    for (var i = 0; i < n; i++) {
+      var th = -i / n * 2 * Math.PI;       // 面積が正になる向き
+      var R = r; if (harm) for (var k = 0; k < harm.length; k++) R += r * harm[k][1] * Math.cos(harm[k][0] * th + harm[k][2]);
+      xs.push(cx + R * Math.cos(th)); ys.push(cy + R * Math.sin(th));
+    }
+    var d = new Drop(xs, ys);
+    if (d.A0 < 0) { xs.reverse(); ys.reverse(); d.A0 = -d.A0; }
+    this.drops.push(d);
+    return d;
+  };
+
+  World.prototype.totalArea = function () { var s = 0; for (var i = 0; i < this.drops.length; i++) s += polyArea(this.drops[i].x, this.drops[i].y); return s; };
+  World.prototype.totalA0 = function () { var s = 0; for (var i = 0; i < this.drops.length; i++) s += this.drops[i].A0; return s; };
+  World.prototype.nodeCount = function () { var s = 0; for (var i = 0; i < this.drops.length; i++) s += this.drops[i].x.length; return s; };
+  World.prototype.dropAt = function (px, py) { for (var i = 0; i < this.drops.length; i++) if (inside(this.drops[i], px, py)) return this.drops[i]; return null; };
+
+  /* ---- 1刻み ---- */
+  World.prototype.step = function (dt) {
+    var P = this.p, drops = this.drops, t = this.tip, i, k, d, n;
+    // 箸の先を含むしずく（そのしずくの油は箸に付く）
+    t.holder = 0;
+    if (t.on) { var hd = this.dropAt(t.x, t.y); if (hd) { t.holder = hd.id; this.att[hd.id] = 1; } }
+    else { this.att = {}; this.tipTime = {}; }
+    var att = this.att;
+
+    // 1) 界面張力
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length;
+      var X = d.x, Y = d.y, ax = d.ax || (d.ax = []), ay = d.ay || (d.ay = []), mm = d.m || (d.m = []);
+      ax.length = n; ay.length = n; mm.length = n;
+      for (i = 0; i < n; i++) {
+        var a = i === 0 ? n - 1 : i - 1, b = i === n - 1 ? 0 : i + 1;
+        var ex1 = X[b] - X[i], ey1 = Y[b] - Y[i], l1 = Math.hypot(ex1, ey1) || 1e-6;
+        var ex2 = X[a] - X[i], ey2 = Y[a] - Y[i], l2 = Math.hypot(ex2, ey2) || 1e-6;
+        var li = Math.max(0.5 * (l1 + l2), P.hMin);   // 点が詰まった小さなしずくで硬くなりすぎないように
+        mm[i] = li / P.h0;                             // 点の質量（受け持つ長さ。力 ÷ 質量 = 加速度）
+        ax[i] = P.S * (ex1 / l1 + ex2 / l2) / li;
+        ay[i] = P.S * (ey1 / l1 + ey2 / l2) / li;
+      }
+    }
+
+    // 2) 近い点どうし（空間ハッシュ）：押し返し、接触、くびれの候補
+    var cs = Math.max(P.dRep, P.dPinch), grid = new Map(), K = 1 << 14;
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k];
+      // 変形の速さ（平均からの速度のずれの二乗平均）→ くびれが切れる太さ
+      var mx0 = 0, my0 = 0, nn = d.x.length, dev = 0, q0;
+      for (q0 = 0; q0 < nn; q0++) { mx0 += d.vx[q0]; my0 += d.vy[q0]; }
+      mx0 /= nn; my0 /= nn;
+      for (q0 = 0; q0 < nn; q0++) { var ddx = d.vx[q0] - mx0, ddy = d.vy[q0] - my0; dev += ddx * ddx + ddy * ddy; }
+      d.dev = Math.sqrt(dev / nn);
+      if (!d.cn || d.cn.length !== nn) d.cn = new Uint8Array(nn); else d.cn.fill(0);   // 他のしずくと接している点
+      for (i = 0; i < d.x.length; i++) {
+        var key = Math.floor(d.x[i] / cs) + 4096 + (Math.floor(d.y[i] / cs) + 4096) * K;
+        var cell = grid.get(key); if (!cell) { cell = []; grid.set(key, cell); }
+        cell.push(k, i);
+      }
+    }
+    var touchNow = {}, pinches = [], pressed = this.pressed || {};
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length;
+      for (i = 0; i < n; i++) {
+        var gx = Math.floor(d.x[i] / cs) + 4096, gy = Math.floor(d.y[i] / cs) + 4096;
+        for (var oy = -1; oy <= 1; oy++) for (var ox = -1; ox <= 1; ox++) {
+          var c2 = grid.get(gx + ox + (gy + oy) * K); if (!c2) continue;
+          for (var q = 0; q < c2.length; q += 2) {
+            var k2 = c2[q], j = c2[q + 1];
+            if (k2 < k || (k2 === k && j <= i)) continue;
+            var d2 = drops[k2];
+            var dx = d2.x[j] - d.x[i], dy = d2.y[j] - d.y[i], dist = Math.hypot(dx, dy);
+            if (dist >= cs || dist < 1e-6) continue;
+            if (k2 !== k && dist < P.dRep + 1) {         // 動いているしずくに押されたら起きる
+              d.cn[i] = 1; d2.cn[j] = 1;
+              if (d.sleep && !d2.sleep && d2.vx[j] * d2.vx[j] + d2.vy[j] * d2.vy[j] > P.vWake * P.vWake) d.sleep = false;
+              if (d2.sleep && !d.sleep && d.vx[i] * d.vx[i] + d.vy[i] * d.vy[i] > P.vWake * P.vWake) d2.sleep = false;
+            }
+            if (k2 === k) {
+              var sep = Math.abs(i - j); sep = Math.min(sep, n - sep);
+              if (sep < 5) continue;
+              var nm = normalAt(d, i);
+              var oilBetween = dx * nm[0] + dy * nm[1] < 0;   // j が i の内側にある＝間は油
+              if (oilBetween) {
+                if (d.calm <= 0 && dist < P.dPinch) pinches.push({ id: d.id, i: i, j: j, dist: dist, rel: dist / P.dPinch });
+                continue;
+              }
+              if (dist >= P.dRep) continue;
+            } else {
+              if (dist >= P.dRep) continue;
+              // 合体：箸で押されているしずくが関わるときだけ汁の膜が抜ける。分かれた直後・合体直後は合体しない
+              if (P.pressMerge && dist < P.dTouch && d.calm <= 0 && d2.calm <= 0 && (pressed[d.id] || pressed[d2.id])) {
+                var ida = d.id, idb = d2.id, pk = ida < idb ? ida + ':' + idb : idb + ':' + ida;
+                if (!touchNow[pk] || dist < touchNow[pk].dist) touchNow[pk] = { dist: dist, a: d.id, ia: i, b: d2.id, ib: j };
+              }
+            }
+            var f = P.kRep * (P.dRep - dist) / P.dRep / dist;
+            // 2点の間の力は、それぞれの質量で割って加速度にする（運動量が保たれる）
+            var m1 = d.m[i], m2 = d2.m[j];
+            d.ax[i] -= f * dx / m1; d.ay[i] -= f * dy / m1;
+            d2.ax[j] += f * dx / m2; d2.ay[j] += f * dy / m2;
+            if (k2 !== k) {              // 汁の膜は粘い：ぶつかった2点の速さの差を減らす（弾みすぎない）
+              var dvx = d2.vx[j] - d.vx[i], dvy = d2.vy[j] - d.vy[i], fd = 0.5 * P.kDamp;
+              d.ax[i] += fd * dvx / m1; d.ay[i] += fd * dvy / m1; d2.ax[j] -= fd * dvx / m2; d2.ay[j] -= fd * dvy / m2;
+            }
+          }
+        }
+      }
+    }
+
+    // 2a) 画面の縁：やわらかい押し返しと粘り（硬い壁で押し返すと、面積の補正と押し合って震える）
+    var dW = P.dWall, kW = P.kRep * P.dRep / dW;
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length;
+      for (i = 0; i < n; i++) {
+        var wx = d.x[i], wy = d.y[i], wd;
+        if ((wd = wx) < dW) { d.ax[i] += kW * (dW - wd) / dW - P.kDamp * d.vx[i] * 0.5; }
+        else if ((wd = this.w - wx) < dW) { d.ax[i] -= kW * (dW - wd) / dW + P.kDamp * d.vx[i] * 0.5; }
+        if ((wd = wy) < dW) { d.ay[i] += kW * (dW - wd) / dW - P.kDamp * d.vy[i] * 0.5; }
+        else if ((wd = this.h - wy) < dW) { d.ay[i] -= kW * (dW - wd) / dW + P.kDamp * d.vy[i] * 0.5; }
+      }
+    }
+
+    // 2b) 引き合い：しずく同士と、しずくと画面の縁（メニスカスによる引力。距離 lAtt で弱まる）
+    if (P.gAtt > 0) this.attract();
+
+    // 3) 速度の更新：力、汁の抵抗、油の粘り、箸への付着
+    var damp = Math.exp(-P.c * dt), relax = 1 - Math.exp(-P.beta * dt), adh = 1 - Math.exp(-P.adhere * dt);
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length;
+      // 眠っているしずく（止まって落ち着いたもの）は動かさない。箸が近づくか、動いているしずくに押されると起きる
+      if (d.sleep) {
+        if (t.on) { var sc0 = dropCenter(d), rr0 = Math.sqrt(d.A0 / Math.PI) * 1.4 + t.r + 24; if ((sc0[0] - t.x) * (sc0[0] - t.x) + (sc0[1] - t.y) * (sc0[1] - t.y) < rr0 * rr0) d.sleep = false; }
+        if (d.sleep) { for (i = 0; i < n; i++) { d.vx[i] = 0; d.vy[i] = 0; } continue; }
+      }
+      // 点の質量は受け持つ輪郭の長さ（張力の和が 0 になる重み）。平均速度もこの重みで
+      var mvx = 0, mvy = 0, msum = 0;
+      for (i = 0; i < n; i++) {
+        d.vx[i] = (d.vx[i] + dt * d.ax[i]) * damp;
+        d.vy[i] = (d.vy[i] + dt * d.ay[i]) * damp;
+        var ia0 = i === 0 ? n - 1 : i - 1, ib0 = i === n - 1 ? 0 : i + 1;
+        var mi = 0.5 * (Math.hypot(d.x[ib0] - d.x[i], d.y[ib0] - d.y[i]) + Math.hypot(d.x[ia0] - d.x[i], d.y[ia0] - d.y[i]));
+        mvx += mi * d.vx[i]; mvy += mi * d.vy[i]; msum += mi;
+      }
+      mvx /= msum; mvy /= msum;
+      for (i = 0; i < n; i++) { d.vx[i] += (mvx - d.vx[i]) * relax; d.vy[i] += (mvy - d.vy[i]) * relax; }
+      // 輪郭に沿った粘り（隣どうしの速度差をならす。陰的にせず小さな係数で）
+      var sm = Math.min(0.45, P.nuL * dt);
+      if (sm > 0) {
+        var ux = d.sx || (d.sx = []), uy = d.sy || (d.sy = []); ux.length = n; uy.length = n;
+        for (i = 0; i < n; i++) { var ia = i === 0 ? n - 1 : i - 1, ib = i === n - 1 ? 0 : i + 1; ux[i] = 0.5 * (d.vx[ia] + d.vx[ib]) - d.vx[i]; uy[i] = 0.5 * (d.vy[ia] + d.vy[ib]) - d.vy[i]; }
+        for (i = 0; i < n; i++) { d.vx[i] += sm * ux[i]; d.vy[i] += sm * uy[i]; }
+      }
+      // 箸の先を含むしずく：箸のまわりの油は箸と一緒に動く（中の流れを、箸からの距離で弱まる引きずりで近似）
+      if (t.on && att[d.id] && P.grab > 0) {
+        var gk = 1 - Math.exp(-P.grab * dt), L2g = P.grabL * P.grabL;
+        for (i = 0; i < n; i++) {
+          var gx2 = d.x[i] - t.x, gy2 = d.y[i] - t.y, gd = Math.sqrt(gx2 * gx2 + gy2 * gy2) - t.r;
+          if (gd < 3 * P.grabL) { var wg = gk * Math.exp(-(gd > 0 ? gd * gd : 0) / L2g); d.vx[i] += (t.vx - d.vx[i]) * wg; d.vy[i] += (t.vy - d.vy[i]) * wg; }
+        }
+      }
+      if (t.on && t.wet) {       // 油で濡れた箸には、どのしずくの油も付く
+        var Rr = t.r + P.adhereRange;
+        for (i = 0; i < n; i++) {
+          var rx = d.x[i] - t.x, ry = d.y[i] - t.y;
+          // 箸の後ろ側（離れていく側）の油だけが付いてくる。前側は押されるか、膜が破れて抜ける
+          if (rx * rx + ry * ry < Rr * Rr && rx * t.vx + ry * t.vy <= 0) { d.vx[i] += (t.vx - d.vx[i]) * adh; d.vy[i] += (t.vy - d.vy[i]) * adh; }
+        }
+      }
+      // 圧力：面積を変える向き（法線方向）の速さの平均を打ち消す（油は縮まない）
+      var qn = 0, ql = 0, nxs = d.nx || (d.nx = []), nys = d.ny || (d.ny = []); nxs.length = n; nys.length = n;
+      for (i = 0; i < n; i++) {
+        var ia2 = i === 0 ? n - 1 : i - 1, ib2 = i === n - 1 ? 0 : i + 1;
+        var tx = d.x[ib2] - d.x[ia2], ty = d.y[ib2] - d.y[ia2], tl = Math.hypot(tx, ty) || 1e-6;
+        nxs[i] = ty / tl; nys[i] = -tx / tl;
+        qn += (d.vx[i] * nxs[i] + d.vy[i] * nys[i]) * tl; ql += tl;
+      }
+      qn /= ql;
+      // 圧力の補正は内力なので、しずく全体の運動量は変えない（点の重みの違いで勝手に進まないように）
+      var p0x = 0, p0y = 0, mt = 0;
+      for (i = 0; i < n; i++) { p0x += d.m[i] * nxs[i]; p0y += d.m[i] * nys[i]; mt += d.m[i]; }
+      p0x *= qn / mt; p0y *= qn / mt;
+      for (i = 0; i < n; i++) { d.vx[i] += -qn * nxs[i] + p0x; d.vy[i] += -qn * nys[i] + p0y; }
+      // 輪郭に沿った（接線方向の）動きは形を変えないので消す。しずく全体の平均の動き＋法線方向の変形だけを残す
+      // （残すと、押し合ったしずくの輪郭の点がぐるぐる回り続ける）
+      // 箸につながって引かれているしずくは除く（引き伸ばされる動きを残す）
+      if (!(t.on && att[d.id])) {
+      var tvx = 0, tvy = 0, tms = 0;
+      for (i = 0; i < n; i++) { var w0 = d.m[i]; tvx += w0 * d.vx[i]; tvy += w0 * d.vy[i]; tms += w0; }
+      tvx /= tms; tvy /= tms;
+      for (i = 0; i < n; i++) {
+        var rx0 = d.vx[i] - tvx, ry0 = d.vy[i] - tvy, rn = rx0 * nxs[i] + ry0 * nys[i];
+        d.vx[i] = tvx + rn * nxs[i]; d.vy[i] = tvy + rn * nys[i];
+      }
+      }
+      // 小さなしずくは界面張力が勝つのでほとんど変形しない：全体として動かす（点が少ないと形が震えやすいため）
+      var rigid = !(t.on && att[d.id]) && d.A0 < Math.PI * P.rRigid * P.rRigid;
+      if (rigid) {
+        var rvx = 0, rvy = 0, rms = 0;
+        for (i = 0; i < n; i++) { rvx += d.m[i] * d.vx[i]; rvy += d.m[i] * d.vy[i]; rms += d.m[i]; }
+        rvx /= rms; rvy /= rms; for (i = 0; i < n; i++) { d.vx[i] = rvx; d.vy[i] = rvy; }
+      }
+      // 1刻みで汁の膜より大きく動かない（相手の輪郭をすり抜けないように）
+      var vcap = 0.45 * Math.max(P.dRep, P.dPinch) / dt;
+      for (i = 0; i < n; i++) {
+        var sp2 = d.vx[i] * d.vx[i] + d.vy[i] * d.vy[i];
+        if (sp2 > vcap * vcap) { var sc = vcap / Math.sqrt(sp2); d.vx[i] *= sc; d.vy[i] *= sc; }
+      }
+      // 眠りの判定に使う、点の速度をならした値（短い震えは打ち消し合う）
+      var ev = d.ev || (d.ev = []); if (ev.length !== 2 * n) { ev.length = 2 * n; ev.fill(0); }
+      var ka = 1 - Math.exp(-dt / P.tAvg), emax = 0;
+      for (i = 0; i < n; i++) {
+        ev[2 * i] += (d.vx[i] - ev[2 * i]) * ka; ev[2 * i + 1] += (d.vy[i] - ev[2 * i + 1]) * ka;
+        var e2 = ev[2 * i] * ev[2 * i] + ev[2 * i + 1] * ev[2 * i + 1]; if (e2 > emax) emax = e2;
+      }
+      var nearTip = t.on && (att[d.id] || (function () { var c0 = dropCenter(d), r0 = Math.sqrt(d.A0 / Math.PI) * 1.4 + t.r + 24; return (c0[0] - t.x) * (c0[0] - t.x) + (c0[1] - t.y) * (c0[1] - t.y) < r0 * r0; })());
+      for (i = 0; i < n; i++) { d.x[i] += dt * d.vx[i]; d.y[i] += dt * d.vy[i]; }
+      // 全体として動かす小さなしずくも、形はゆっくり丸に戻す（すき間に押し込まれた三角形のまま固まらないように）
+      if (rigid && P.tRound > 0) {
+        var rc = dropCenter(d), R0 = Math.sqrt(d.A0 / Math.PI), kr = 1 - Math.exp(-dt / P.tRound);
+        for (i = 0; i < n; i++) {
+          var ox0 = d.x[i] - rc[0], oy0 = d.y[i] - rc[1], ol = Math.sqrt(ox0 * ox0 + oy0 * oy0) || 1;
+          if (d.cn[i] && ol < R0) continue;          // 相手と接している点は外へは押し出さない（押し合いと交互に効いて震えるため）
+          d.x[i] += (rc[0] + ox0 * R0 / ol - d.x[i]) * kr; d.y[i] += (rc[1] + oy0 * R0 / ol - d.y[i]) * kr;
+        }
+      }
+      // 眠り：丸くて止まったしずくだけ（つぶれた形のまま固めない）
+      if (!nearTip && d.calm <= 0 && Math.sqrt(emax) < P.vSleep && roundness(d) < P.sleepRound) d.still = (d.still || 0) + dt; else d.still = 0;
+      if (d.still > P.tSleep) { d.sleep = true; d.still = 0; for (i = 0; i < n; i++) { d.vx[i] = 0; d.vy[i] = 0; } ev.fill(0); }
+    }
+
+    // 4) 拘束：箸の円の中に入れない・画面の縁
+    var newPressed = {}; for (var aid in att) newPressed[aid] = 1;
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length;
+      var isHolder = !!att[d.id];
+      for (i = 0; i < n; i++) {
+        if (t.on) {
+          var px = d.x[i] - t.x, py = d.y[i] - t.y, r2 = px * px + py * py;
+          // 箸の先を含むしずくの輪郭は押さない（箸は油の中を通れる。まわりの油は引きずられる）
+          if (r2 < (t.r + 3) * (t.r + 3)) newPressed[d.id] = 1;
+          if (r2 < t.r * t.r && !isHolder) {
+            var r = Math.sqrt(r2) || 1e-6, nx = px / r, ny = py / r;
+            d.x[i] = t.x + nx * t.r; d.y[i] = t.y + ny * t.r;
+            var vn = d.vx[i] * nx + d.vy[i] * ny, un = t.vx * nx + t.vy * ny;
+            if (vn < un) { d.vx[i] += (un - vn) * nx; d.vy[i] += (un - vn) * ny; }
+          }
+        }
+        if (d.x[i] < 0) { d.x[i] = 0; if (d.vx[i] < 0) d.vx[i] = 0; }
+        else if (d.x[i] > this.w) { d.x[i] = this.w; if (d.vx[i] > 0) d.vx[i] = 0; }
+        if (d.y[i] < 0) { d.y[i] = 0; if (d.vy[i] < 0) d.vy[i] = 0; }
+        else if (d.y[i] > this.h) { d.y[i] = this.h; if (d.vy[i] > 0) d.vy[i] = 0; }
+      }
+    }
+
+    this.pressed = newPressed;
+
+    // 4b) 箸の油の膜：ゆっくり触れたしずくは箸につながる。2つ以上つながると、箸を通して1つになる
+    if (t.on) {
+      var tsp = Math.hypot(t.vx, t.vy), tt2 = {};
+      for (k = 0; k < drops.length; k++) {
+        var idd = drops[k].id, touching = false, dd2 = drops[k];
+        for (i = 0; i < dd2.x.length; i++) { var qx = dd2.x[i] - t.x, qy = dd2.y[i] - t.y; if (qx * qx + qy * qy < (t.r + 1.5) * (t.r + 1.5)) { touching = true; break; } }
+        if (touching || att[idd]) {
+          var tm = (this.tipTime[idd] || 0) + (tsp < P.vWet ? dt : 0);
+          tt2[idd] = touching ? tm : (this.tipTime[idd] || 0) - dt;
+          if (touching && tm >= P.tWet) att[idd] = 1;
+          if (!touching && att[idd] && idd !== t.holder && tt2[idd] < -0.15) delete att[idd];   // 離れて0.15秒でつながりが切れる
+        }
+      }
+      this.tipTime = tt2;
+      var ids = []; for (var aid2 in att) if (this.indexOf(+aid2) >= 0) ids.push(+aid2); else delete att[aid2];
+      while (ids.length >= 2) {
+        var m = this.bridge(ids[0], ids[1]);
+        ids.splice(0, 2); if (m) { ids.unshift(m.id); att = this.att; }
+      }
+    }
+
+
+    // 5) 面積の保存（法線方向に一様にずらす。2回）
+    for (k = 0; k < drops.length; k++) this.fixArea(drops[k], 0);
+
+    // 5b) 重なったしずくは押し離す（箸が関わらないかぎり合体しない）
+    this.separateOverlaps();
+
+    // 6) トポロジー：くびれで分かれる、接触が続くと合体する（点の番号が変わる前に）
+    var didSplit = false;
+    if (pinches.length) {
+      pinches.sort(function (a, b) { return a.rel - b.rel; });
+      for (var pq = 0; pq < pinches.length && pq < 40; pq++) if (this.split(pinches[pq])) { didSplit = true; break; }
+    }
+    // 速く引き伸ばされた細長いしずくは、いちばん細い所で切れる
+    if (!didSplit) for (k = 0; k < drops.length; k++) {
+      d = drops[k];
+      if (d.calm > 0 || d.dev < P.devTear || d.A0 < 2 * P.minPiece) continue;
+      if (aspect(d) < P.aTear) continue;
+      var nk = narrowest(d, Math.max(0.15, P.minPiece / d.A0));
+      if (nk && this.split({ id: d.id, i: nk.i, j: nk.j, dist: nk.dist, tear: true })) break;
+    }
+    var pk2, nextC = {};
+    for (pk2 in touchNow) {
+      var tt = (this.contacts[pk2] || 0) + dt;
+      if (tt >= P.tDrain) { this.merge(touchNow[pk2]); continue; }
+      nextC[pk2] = tt;
+    }
+    for (pk2 in this.contacts) if (!(pk2 in nextC) && !(pk2 in touchNow)) {
+      var dec = this.contacts[pk2] - 2 * dt; if (dec > 0) nextC[pk2] = dec;
+    }
+    this.contacts = nextC;
+
+    // 7) 点の間隔をそろえ、ねじれた輪郭をほどく
+    for (k = 0; k < drops.length; k++) { this.remesh(drops[k]); untangle(drops[k]); }
+
+    for (k = 0; k < drops.length; k++) if (drops[k].calm > 0) drops[k].calm -= dt;
+
+    // 8) 小さすぎる粒
+    for (k = drops.length - 1; k >= 0; k--) {
+      if (drops[k].A0 < P.minArea || drops[k].x.length < 6) { this.lostArea += drops[k].A0; drops.splice(k, 1); }
+    }
+    this.time += dt; this.steps++;
+  };
+
+  // 箸の先がしずくの中にあるときは、輪郭が囲む面積 = 油 + 箸の断面
+  World.prototype.fixArea = function (d, extra) {
+    var n = d.x.length, target = d.A0 + (extra || 0);
+    for (var it = 0; it < 2; it++) {
+      var A = polyArea(d.x, d.y), L = perimeter(d.x, d.y);
+      var delta = (target - A) / (L || 1);
+      if (Math.abs(delta) < 1e-6) return;
+      var nx = new Array(n), ny = new Array(n);
+      for (var i = 0; i < n; i++) { var nm = normalAt(d, i); nx[i] = nm[0]; ny[i] = nm[1]; }
+      for (var j = 0; j < n; j++) { d.x[j] += delta * nx[j]; d.y[j] += delta * ny[j]; }
+    }
+  };
+
+  World.prototype.remesh = function (d) {
+    var P = this.p, i, n;
+    // 長い辺を割る
+    for (i = 0; i < d.x.length; i++) {
+      n = d.x.length; var b = (i + 1) % n;
+      var L = Math.hypot(d.x[b] - d.x[i], d.y[b] - d.y[i]);
+      if (L > P.hMax) {
+        d.x.splice(i + 1, 0, 0.5 * (d.x[i] + d.x[b])); d.y.splice(i + 1, 0, 0.5 * (d.y[i] + d.y[b]));
+        d.vx.splice(i + 1, 0, 0.5 * (d.vx[i] + d.vx[b])); d.vy.splice(i + 1, 0, 0.5 * (d.vy[i] + d.vy[b]));
+        if (b === 0) { /* 先頭をまたぐときも挿入位置は末尾でよい */ }
+      }
+    }
+    // 短い辺をつぶす
+    for (i = 0; i < d.x.length && d.x.length > 8; i++) {
+      n = d.x.length; var c = (i + 1) % n;
+      var L2 = Math.hypot(d.x[c] - d.x[i], d.y[c] - d.y[i]);
+      if (L2 < P.hMin) {
+        d.x[i] = 0.5 * (d.x[i] + d.x[c]); d.y[i] = 0.5 * (d.y[i] + d.y[c]);
+        d.vx[i] = 0.5 * (d.vx[i] + d.vx[c]); d.vy[i] = 0.5 * (d.vy[i] + d.vy[c]);
+        d.x.splice(c, 1); d.y.splice(c, 1); d.vx.splice(c, 1); d.vy.splice(c, 1);
+        if (c < i) i--;
+      }
+    }
+  };
+
+  // 縦横比（慣性モーメントの主軸の比の平方根）
+  function aspect(d) {
+    var n = d.x.length, mx = 0, my = 0, i;
+    for (i = 0; i < n; i++) { mx += d.x[i]; my += d.y[i]; }
+    mx /= n; my /= n;
+    var sxx = 0, syy = 0, sxy = 0;
+    for (i = 0; i < n; i++) { var dx = d.x[i] - mx, dy = d.y[i] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+    var tr = sxx + syy, det = sxx * syy - sxy * sxy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+    var l1 = tr / 2 + disc, l2 = Math.max(1e-6, tr / 2 - disc);
+    return Math.sqrt(l1 / l2);
+  }
+  // 油をはさんで向かい合う輪郭の、いちばん近い組（輪の上で10点以上離れ、両側に面積の frac 以上が残るもの）
+  function narrowest(d, frac) {
+    var n = d.x.length, X = d.x, Y = d.y, best = null, i, j;
+    var S = new Float64Array(n + 1);              // 面積の部分和（向きつき）
+    for (i = 0; i < n; i++) { var b = (i + 1) % n; S[i + 1] = S[i] + X[i] * Y[b] - X[b] * Y[i]; }
+    var Atot = 0.5 * S[n], need = frac * Atot;
+    for (i = 0; i < n; i++) {
+      var nm = normalAt(d, i);
+      for (j = i + 10; j < n; j++) {
+        if (n - (j - i) < 10) break;
+        var dx = X[j] - X[i], dy = Y[j] - Y[i];
+        if (dx * nm[0] + dy * nm[1] >= 0) continue;
+        var dd = dx * dx + dy * dy;
+        if (best && dd >= best.d2) continue;
+        var A1 = 0.5 * (S[j] - S[i] + X[j] * Y[i] - X[i] * Y[j]);
+        if (A1 < need || Atot - A1 < need) continue;
+        best = { i: i, j: j, d2: dd };
+      }
+    }
+    if (best) best.dist = Math.sqrt(best.d2);
+    return best;
+  }
+
+  function slice(arr, a, b) {               // a から b まで（両端を含む、輪をまたいでよい）
+    var n = arr.length, out = [];
+    for (var i = a; ; i = (i + 1) % n) { out.push(arr[i]); if (i === b) break; }
+    return out;
+  }
+
+  World.prototype.indexOf = function (id) { for (var k = 0; k < this.drops.length; k++) if (this.drops[k].id === id) return k; return -1; };
+  World.prototype.split = function (pc) {
+    var kk = this.indexOf(pc.id); if (kk < 0) return;
+    var d = this.drops[kk], i = Math.min(pc.i, pc.j), j = Math.max(pc.i, pc.j);
+    var x1 = slice(d.x, i, j), y1 = slice(d.y, i, j), x2 = slice(d.x, j, i), y2 = slice(d.y, j, i);
+    var vx1 = slice(d.vx, i, j), vy1 = slice(d.vy, i, j), vx2 = slice(d.vx, j, i), vy2 = slice(d.vy, j, i);
+    var A1 = polyArea(x1, y1), A2 = polyArea(x2, y2);
+    if (A1 <= 0 || A2 <= 0) return false;      // 形が乱れているときは見送る
+    // ふつうの細いくびれでなく「速く伸ばされて切れる」ときは、どちらの側もある程度の大きさがあること
+    var small = Math.min(A1, A2);
+    if (pc.tear && small < Math.max(this.p.minPiece, 0.15 * (A1 + A2))) return false;
+    var s = d.A0 / (A1 + A2);
+    var a = new Drop(x1, y1, A1 * s), b = new Drop(x2, y2, A2 * s);
+    a.vx = vx1; a.vy = vy1; b.vx = vx2; b.vy = vy2; a.calm = b.calm = 0.4;
+    this.drops.splice(kk, 1, a, b);
+    this.events.push({ t: this.time, type: 'split' });
+    return true;
+  };
+
+  // 箸を通して2つのしずくをつなぐ：それぞれの、箸にいちばん近い点どうしを結ぶ
+  World.prototype.bridge = function (ida, idb) {
+    var ka = this.indexOf(ida), kb = this.indexOf(idb), t = this.tip;
+    if (ka < 0 || kb < 0) return null;
+    function nearest(d) { var bi = 0, bd = 1e18; for (var i = 0; i < d.x.length; i++) { var q = (d.x[i] - t.x) * (d.x[i] - t.x) + (d.y[i] - t.y) * (d.y[i] - t.y); if (q < bd) { bd = q; bi = i; } } return bi; }
+    var m = this.merge({ a: ida, ia: nearest(this.drops[ka]), b: idb, ib: nearest(this.drops[kb]) });
+    if (m) { delete this.att[ida]; delete this.att[idb]; this.att[m.id] = 1; this.tipTime[m.id] = 1; }
+    return m;
+  };
+
+  // 引き合い：輪郭どうしの実際のすき間で決める。触れる手前（汁の膜の厚み dRep）で 0 になめらかに落ちる
+  // 力は2つのしずくに逆向きで等しく（運動量を保つ）、しずく全体に一様に加える
+  function smooth01(e0, e1, x) { var u = clamp((x - e0) / (e1 - e0), 0, 1); return u * u * (3 - 2 * u); }
+  World.prototype.attract = function () {
+    var P = this.p, drops = this.drops, n = drops.length, c = [], k, j, i, rng = P.dRep + 5 * P.lAtt;
+    for (k = 0; k < n; k++) {
+      var d = drops[k], m = d.x.length, x = 0, y = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (i = 0; i < m; i++) { var px = d.x[i], py = d.y[i]; x += px; y += py; if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; }
+      var msum = 0; for (i = 0; i < m; i++) msum += d.m[i];
+      c.push({ cx: x / m, cy: y / m, bb: [x0, y0, x1, y1], fx: 0, fy: 0, mass: d.A0, msum: msum });
+    }
+    for (k = 0; k < n; k++) {
+      var a = c[k], A = drops[k];
+      // 画面の縁：いちばん近い点と縁のすき間
+      var walls = [[a.bb[0], -1, 0], [this.w - a.bb[2], 1, 0], [a.bb[1], 0, -1], [this.h - a.bb[3], 0, 1]];
+      for (i = 0; i < 4; i++) {
+        var g = walls[i][0];
+        if (g < rng) { var fw = P.gAtt * Math.exp(-g / P.lAtt) * smooth01(P.dWall, P.dWall + 3, g) * a.msum; a.fx += fw * walls[i][1]; a.fy += fw * walls[i][2]; }
+      }
+      for (j = k + 1; j < n; j++) {
+        var b = c[j];
+        if (a.bb[0] - rng > b.bb[2] || b.bb[0] - rng > a.bb[2] || a.bb[1] - rng > b.bb[3] || b.bb[1] - rng > a.bb[3]) continue;
+        var B = drops[j], best = 1e18, bi = 0, bj = 0;
+        for (var p = 0; p < A.x.length; p++) for (var q = 0; q < B.x.length; q++) {
+          var dx = B.x[q] - A.x[p], dy = B.y[q] - A.y[p], dd = dx * dx + dy * dy;
+          if (dd < best) { best = dd; bi = p; bj = q; }
+        }
+        var gap = Math.sqrt(best);
+        if (gap > rng) continue;
+        // 遠くからの引き寄せ。触れる手前でなめらかに 0 にし、そこから先は輪郭どうしの付着（2c）に任せる
+        var f = P.gAtt * Math.exp(-Math.max(0, gap - P.dRep) / P.lAtt) * (P.press + (1 - P.press) * smooth01(P.dRep, P.dRep + 4, gap)) * Math.min(a.msum, b.msum);
+        // 向きは重心どうしを結ぶ線（ずれた向きだと2つが回り続ける）。大きさだけ輪郭のすき間で決める
+        var ux = b.cx - a.cx, uy = b.cy - a.cy, L = Math.sqrt(ux * ux + uy * uy) || 1e-6;
+        a.fx += f * ux / L; a.fy += f * uy / L; b.fx -= f * ux / L; b.fy -= f * uy / L;
+      }
+    }
+    // 力 ÷ 面積 を、しずくの全部の点に加速度として加える
+    for (k = 0; k < n; k++) { var dk = drops[k], axk = c[k].fx / c[k].msum, ayk = c[k].fy / c[k].msum; for (i = 0; i < dk.x.length; i++) { dk.ax[i] += axk; dk.ay[i] += ayk; } }
+  };
+
+  // 重なり：相手の内側に入った点を、相手の輪郭の外へ押し出す
+  World.prototype.separateOverlaps = function () {
+    var drops = this.drops;
+    for (var a = 0; a < drops.length; a++) {
+      var A = drops[a], ba = bbox(A);
+      for (var b = a + 1; b < drops.length; b++) {
+        var B = drops[b], bb = bbox(B);
+        if (ba[2] < bb[0] || bb[2] < ba[0] || ba[3] < bb[1] || bb[3] < ba[1]) continue;
+        var inA = pushOut(A, B), inB = pushOut(B, A);
+        // ほとんど丸ごと入り込んだ（めったにない）ときだけは1つにまとめる
+        if (inA > 0.6 * A.x.length || inB > 0.6 * B.x.length) { this.unite(a, b); return this.separateOverlaps(); }
+        if (inA || inB) { this.fixArea(A, 0); this.fixArea(B, 0); }
+      }
+    }
+  };
+  var SEP_PAD = 0.3;
+  function pushOut(A, B) {
+    var cnt = 0;
+    for (var i = 0; i < A.x.length; i++) {
+      if (!inside(B, A.x[i], A.y[i])) continue;
+      cnt++; A.sleep = false;
+      var q = nearestOn(B, A.x[i], A.y[i]);
+      // 相手の輪郭のすぐ外へ（余分に押し出すと、押し合いと交互に効いて震える）
+      var ox = q[0] - A.x[i], oy = q[1] - A.y[i], L = Math.hypot(ox, oy) || 1e-6;
+      A.x[i] = q[0] + SEP_PAD * ox / L; A.y[i] = q[1] + SEP_PAD * oy / L;
+      var vn = A.vx[i] * ox / L + A.vy[i] * oy / L; if (vn < 0) { A.vx[i] -= vn * ox / L; A.vy[i] -= vn * oy / L; }
+    }
+    return cnt;
+  }
+  function nearestOn(d, px, py) {
+    var n = d.x.length, best = 1e18, bx = px, by = py;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      var ax = d.x[j], ay = d.y[j], ex = d.x[i] - ax, ey = d.y[i] - ay, L = ex * ex + ey * ey || 1e-9;
+      var s = clamp(((px - ax) * ex + (py - ay) * ey) / L, 0, 1), qx = ax + s * ex, qy = ay + s * ey;
+      var q = (qx - px) * (qx - px) + (qy - py) * (qy - py); if (q < best) { best = q; bx = qx; by = qy; }
+    }
+    return [bx, by];
+  }
+  // ねじれ（輪郭の自己交差）をほどく：交わる2辺 (a,a+1) と (b,b+1) の間の点の並びを逆にする
+  function segX(ax, ay, bx, by, cx, cy, dx, dy) {
+    var d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax), d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+    var d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx), d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+    return d1 * d2 < 0 && d3 * d4 < 0;
+  }
+  function untangle(d) {
+    for (var pass = 0; pass < 12; pass++) {
+      var n = d.x.length, X = d.x, Y = d.y, found = false;
+      for (var a = 0; a < n && !found; a++) {
+        var a1 = (a + 1) % n;
+        var minx = Math.min(X[a], X[a1]), maxx = Math.max(X[a], X[a1]), miny = Math.min(Y[a], Y[a1]), maxy = Math.max(Y[a], Y[a1]);
+        for (var b = a + 2; b < n; b++) {
+          var b1 = (b + 1) % n; if (b1 === a) continue;
+          if (Math.max(X[b], X[b1]) < minx || Math.min(X[b], X[b1]) > maxx || Math.max(Y[b], Y[b1]) < miny || Math.min(Y[b], Y[b1]) > maxy) continue;
+          if (segX(X[a], Y[a], X[a1], Y[a1], X[b], Y[b], X[b1], Y[b1])) {
+            // a+1 .. b を逆順に
+            for (var i = a + 1, j = b; i < j; i++, j--) {
+              var tx = X[i]; X[i] = X[j]; X[j] = tx; tx = Y[i]; Y[i] = Y[j]; Y[j] = tx;
+              tx = d.vx[i]; d.vx[i] = d.vx[j]; d.vx[j] = tx; tx = d.vy[i]; d.vy[i] = d.vy[j]; d.vy[j] = tx;
+            }
+            found = true; break;
+          }
+        }
+      }
+      if (!found) break;
+    }
+    if (polyArea(d.x, d.y) < 0) { d.x.reverse(); d.y.reverse(); d.vx.reverse(); d.vy.reverse(); }
+  }
+
+  // 重なり：一方の点がもう一方の内側にあれば、2つを1つの輪郭にまとめ直す
+  World.prototype.mergeOverlaps = function () {
+    var drops = this.drops;
+    for (var a = 0; a < drops.length; a++) {
+      var A = drops[a], ba = bbox(A);
+      for (var b = a + 1; b < drops.length; b++) {
+        var B = drops[b], bb = bbox(B);
+        if (ba[2] < bb[0] || bb[2] < ba[0] || ba[3] < bb[1] || bb[3] < ba[1]) continue;
+        if (!overlaps(A, B) && !overlaps(B, A)) continue;
+        this.unite(a, b);
+        return this.mergeOverlaps();          // 配列が変わったので最初から
+      }
+    }
+  };
+  function roundness(d) { var n = d.x.length, L = 0; for (var i = 0; i < n; i++) { var j = (i + 1) % n; L += Math.hypot(d.x[j] - d.x[i], d.y[j] - d.y[i]); } return L / (2 * Math.sqrt(Math.PI * d.A0)); }
+  function dropCenter(d) { var x = 0, y = 0, n = d.x.length; for (var i = 0; i < n; i++) { x += d.x[i]; y += d.y[i]; } return [x / n, y / n]; }
+  function bbox(d) {
+    var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (var i = 0; i < d.x.length; i++) { var x = d.x[i], y = d.y[i]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return [x0, y0, x1, y1];
+  }
+  function overlaps(A, B) {                    // A の点が B の内側に深く（1.5px 以上）入っているか
+    for (var i = 0; i < A.x.length; i += 2) if (inside(B, A.x[i], A.y[i]) && distToPoly(B, A.x[i], A.y[i]) > 1.5) return true;
+    return false;
+  }
+  function distToPoly(d, px, py) {
+    var n = d.x.length, best = 1e18;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      var ax = d.x[j], ay = d.y[j], ex = d.x[i] - ax, ey = d.y[i] - ay, L = ex * ex + ey * ey || 1e-9;
+      var s = clamp(((px - ax) * ex + (py - ay) * ey) / L, 0, 1), qx = ax + s * ex - px, qy = ay + s * ey - py;
+      var q = qx * qx + qy * qy; if (q < best) best = q;
+    }
+    return Math.sqrt(best);
+  }
+  // 2つの輪郭の和集合を、合わせた重心から放射状に測って作り直す（丸いしずくどうしなら十分）
+  World.prototype.unite = function (ka, kb) {
+    var A = this.drops[ka], B = this.drops[kb], P = this.p;
+    var Aa = A.A0, Ab = B.A0;
+    function cen(d) { var x = 0, y = 0; for (var i = 0; i < d.x.length; i++) { x += d.x[i]; y += d.y[i]; } return [x / d.x.length, y / d.x.length]; }
+    function mv(d) { var x = 0, y = 0; for (var i = 0; i < d.x.length; i++) { x += d.vx[i]; y += d.vy[i]; } return [x / d.x.length, y / d.x.length]; }
+    var ca = cen(A), cb = cen(B), cx = (ca[0] * Aa + cb[0] * Ab) / (Aa + Ab), cy = (ca[1] * Aa + cb[1] * Ab) / (Aa + Ab);
+    var va = mv(A), vb = mv(B), vx = (va[0] * Aa + vb[0] * Ab) / (Aa + Ab), vy = (va[1] * Aa + vb[1] * Ab) / (Aa + Ab);
+    var R = Math.sqrt((Aa + Ab) / Math.PI), N = Math.max(12, Math.round(2 * Math.PI * R / P.h0));
+    var xs = [], ys = [];
+    for (var k = 0; k < N; k++) {
+      var th = -k / N * 2 * Math.PI, ux = Math.cos(th), uy = Math.sin(th);
+      var r = Math.max(rayHit(A, cx, cy, ux, uy), rayHit(B, cx, cy, ux, uy));
+      if (r <= 0) r = R;
+      xs.push(cx + ux * r); ys.push(cy + uy * r);
+    }
+    if (polyArea(xs, ys) < 0) { xs.reverse(); ys.reverse(); }
+    var m = new Drop(xs, ys, Aa + Ab); m.vx = xs.map(function () { return vx; }); m.vy = ys.map(function () { return vy; }); m.calm = 0.3;
+    var wasAtt = this.att[A.id] || this.att[B.id];
+    delete this.att[A.id]; delete this.att[B.id]; if (wasAtt) this.att[m.id] = 1;
+    var hi = Math.max(ka, kb), lo = Math.min(ka, kb);
+    this.drops.splice(hi, 1); this.drops.splice(lo, 1, m);
+    this.fixArea(m, 0);
+    this.events.push({ t: this.time, type: 'merge' });
+    return m;
+  };
+  function rayHit(d, cx, cy, ux, uy) {          // 中心から向き u の半直線が輪郭と交わるいちばん遠い距離（交わらなければ 0）
+    var n = d.x.length, best = 0;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      var ax = d.x[j] - cx, ay = d.y[j] - cy, bx = d.x[i] - cx, by = d.y[i] - cy;
+      var ex = bx - ax, ey = by - ay, den = ux * ey - uy * ex;
+      if (Math.abs(den) < 1e-12) continue;
+      var s = (ax * ey - ay * ex) / den, w = (ax * uy - ay * ux) / den;
+      if (s > 0 && w >= 0 && w <= 1 && s > best) best = s;
+    }
+    return best;
+  }
+
+  World.prototype.merge = function (c) {
+    var ka = this.indexOf(c.a), kb = this.indexOf(c.b);
+    if (ka < 0 || kb < 0 || ka === kb) return null;      // この刻みで分かれたしずくは見送る
+    var A = this.drops[ka], B = this.drops[kb];
+    if (c.ia >= A.x.length || c.ib >= B.x.length) return null;
+    var na = A.x.length, nb = B.x.length, ia = c.ia, ib = c.ib;
+    var xs = [], ys = [], vx = [], vy = [], k, idx;
+    for (k = 1; k <= na; k++) { idx = (ia + k) % na; xs.push(A.x[idx]); ys.push(A.y[idx]); vx.push(A.vx[idx]); vy.push(A.vy[idx]); }
+    for (k = 1; k <= nb; k++) { idx = (ib + k) % nb; xs.push(B.x[idx]); ys.push(B.y[idx]); vx.push(B.vx[idx]); vy.push(B.vy[idx]); }
+    var m = new Drop(xs, ys, A.A0 + B.A0); m.vx = vx; m.vy = vy; m.calm = 0.3;
+    var hi = Math.max(ka, kb), lo = Math.min(ka, kb);
+    this.drops.splice(hi, 1); this.drops.splice(lo, 1, m);
+    if (this.att[A.id] || this.att[B.id]) { delete this.att[A.id]; delete this.att[B.id]; this.att[m.id] = 1; }
+    this.events.push({ t: this.time, type: 'merge' });
+    return m;
+  };
+
+  /* ------------------------------------------------------------------
+   * 初期配置：大小のしずく。近い2つの組をいくつか混ぜる
+   * ------------------------------------------------------------------ */
+  function scatter(world, seed) {
+    var rnd = mulberry32(seed), W = world.w, H = world.h, S = Math.min(W, H);
+    var placed = [];
+    function harm() { return [[2, 0.03 * rnd(), rnd() * 6.28], [3, 0.02 * rnd(), rnd() * 6.28]]; }
+    function free(x, y, r, gap) {
+      if (x - r < 14 || y - r < 70 || x + r > W - 14 || y + r > H - 60) return false;
+      for (var k = 0; k < placed.length; k++) { var p = placed[k]; if (Math.hypot(p[0] - x, p[1] - y) < p[2] + r + gap) return false; }
+      return true;
+    }
+    function put(x, y, r) { placed.push([x, y, r]); world.addCircle(x, y, r, harm()); }
+    var target = W * H * 0.20, area = 0, tries = 0, count = 0;
+    // 近い2つの組（すき間は箸の直径くらい）
+    for (var p = 0; p < 2 && tries < 400; tries++) {
+      var r1 = S * (0.07 + 0.05 * rnd()), x1 = W * (0.15 + 0.7 * rnd()), y1 = H * (0.15 + 0.7 * rnd());
+      var r2 = S * (0.05 + 0.05 * rnd()), ang = rnd() * 6.283, gap = 14 + 14 * rnd();
+      var x2 = x1 + Math.cos(ang) * (r1 + r2 + gap), y2 = y1 + Math.sin(ang) * (r1 + r2 + gap);
+      if (free(x1, y1, r1, 24) && free(x2, y2, r2, 24) && Math.hypot(x2 - x1, y2 - y1) >= r1 + r2 + gap - 1) {
+        put(x1, y1, r1); put(x2, y2, r2); area += Math.PI * (r1 * r1 + r2 * r2); p++;
+      }
+    }
+    // 大きなしずく1つ
+    for (tries = 0; tries < 300; tries++) {
+      var rb = S * (0.15 + 0.04 * rnd()), xb = W * (0.2 + 0.6 * rnd()), yb = H * (0.2 + 0.6 * rnd());
+      if (free(xb, yb, rb, 22)) { put(xb, yb, rb); area += Math.PI * rb * rb; break; }
+    }
+    // 残りは大小いろいろ
+    for (tries = 0; tries < 2000 && area < target; tries++) {
+      var u = rnd(), rr = S * (0.03 + 0.09 * u * u), xx = W * rnd(), yy = H * rnd();
+      if (free(xx, yy, rr, 18)) { put(xx, yy, rr); area += Math.PI * rr * rr; if (++count >= 30) break; }
+    }
+  }
+  function practice(world) {
+    var W = world.w, H = world.h, S = Math.min(W, H), portrait = H >= W;
+    var L = portrait ? H : W, C = portrait ? W : H;
+    function at(along, across) { return portrait ? [across, along] : [along, across]; }
+    var r = S * 0.12, gap = 22;
+    var a = at(L * 0.27, C * 0.5 - r - gap / 2), b = at(L * 0.27, C * 0.5 + r * 0.9 + gap / 2);
+    world.addCircle(a[0], a[1], r); world.addCircle(b[0], b[1], r * 0.9);
+    var c = at(L * 0.5, C * 0.5); world.addCircle(c[0], c[1], S * 0.07);
+    var e = at(L * 0.74, C * 0.5); world.addCircle(e[0], e[1], S * 0.2);
+  }
+
+  /* ------------------------------------------------------------------
+   * Sim：指の動きを刻みに分け、操作を記録する
+   * ------------------------------------------------------------------ */
+  function Sim(w, h, params) {
+    this.world = new World(w, h, params);
+    this.target = null;
+    this.dtMax = 1 / 120;
+    this.maxSub = 8;
+    this.lastSub = 1;
+    this.log = new GestureLog(this);
+  }
+  Sim.prototype.down = function (x, y) {
+    var t = this.world.tip; t.on = true; t.x = x; t.y = y; t.vx = 0; t.vy = 0; t.r = this.world.p.tipR;
+    t.wet = true;                           // 箸は立てたまま使うので、先はいつも油で濡れている
+    this.target = { x: x, y: y }; this.log.begin(x, y);
+  };
+  Sim.prototype.move = function (x, y) { if (this.target) { this.target.x = x; this.target.y = y; } };
+  Sim.prototype.up = function () {
+    var t = this.world.tip; t.on = false; t.vx = 0; t.vy = 0; t.holder = 0; t.wet = false; this.world.att = {}; this.world.tipTime = {}; this.target = null;
+    return this.log.end();
+  };
+  Sim.prototype.frame = function (frameDt) {
+    var w = this.world, t = w.tip, dx = 0, dy = 0;
+    var n = Math.max(1, Math.ceil(frameDt / this.dtMax - 1e-9));
+    if (t.on && this.target) {
+      dx = this.target.x - t.x; dy = this.target.y - t.y;
+      var dist = Math.hypot(dx, dy), step = t.r * 0.35;     // 1刻みで箸が進むのは半径の35%まで
+      n = Math.max(n, Math.ceil(dist / step));
+      if (n > this.maxSub) { n = this.maxSub; var reach = n * step; if (dist > reach) { dx *= reach / dist; dy *= reach / dist; } }
+    }
+    if (frameDt > n * this.dtMax) frameDt = n * this.dtMax;
+    var dt = frameDt / n;
+    for (var s = 0; s < n; s++) {
+      if (t.on) { t.vx = dx / n / dt; t.vy = dy / n / dt; t.x += dx / n; t.y += dy / n; }
+      w.step(dt);
+      if (t.on) this.log.sample(t.x, t.y);
+    }
+    this.lastSub = n;
+  };
+
+  /* ---- 操作の記録（触れ始めた時点のしずくの配置に対して分類。記録と表示のためだけ） ---- */
+  function GestureLog(sim) { this.sim = sim; this.cur = null; this.snap = null; }
+  GestureLog.prototype.idAt = function (x, y) {
+    for (var k = 0; k < this.snap.length; k++) if (inside(this.snap[k], x, y)) return this.snap[k].id;
+    return 0;
+  };
+  GestureLog.prototype.begin = function (x, y) {
+    var w = this.sim.world;
+    this.snap = w.drops.map(function (d) { return { id: d.id, x: d.x.slice(), y: d.y.slice() }; });
+    var id = this.idAt(x, y);
+    this.cur = { x0: x, y0: y, t0: w.time, start: id, seq: [id], dist: 0, lx: x, ly: y, vmax: 0, count0: w.drops.length };
+  };
+  GestureLog.prototype.sample = function (x, y) {
+    var c = this.cur; if (!c) return;
+    c.dist += Math.hypot(x - c.lx, y - c.ly); c.lx = x; c.ly = y;
+    var t = this.sim.world.tip, sp = Math.hypot(t.vx, t.vy); if (sp > c.vmax) c.vmax = sp;
+    var id = this.idAt(x, y);
+    if (id !== c.seq[c.seq.length - 1]) c.seq.push(id);
+  };
+  GestureLog.prototype.end = function () {
+    var c = this.cur; if (!c) return null; this.cur = null;
+    var w = this.sim.world, seq = c.seq, kind;
+    var ins = seq.filter(function (v) { return v !== 0; });
+    if (c.dist < 4) kind = c.start ? 'TOUCH_IN' : 'TAP';
+    else if (c.start) {
+      var other = ins.some(function (v) { return v !== c.start; });
+      kind = other ? 'CONNECT' : 'DRAG';
+    } else {
+      if (ins.length && seq[seq.length - 1] === 0) kind = 'CUT';
+      else if (ins.length) kind = 'ENTER';
+      else kind = 'OUTSIDE';
+    }
+    return {
+      kind: kind, seq: seq.map(function (v) { return v ? '中' : '外'; }).join('→'),
+      dist: c.dist, dur: w.time - c.t0, vmax: c.vmax, countBefore: c.count0
+    };
+  };
+
+  var api = { World: World, Sim: Sim, DEFAULTS: DEFAULTS, scatter: scatter, practice: practice, polyArea: polyArea, mulberry32: mulberry32, ENGINE_VERSION: ENGINE_VERSION };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.OilContour = api;
+})(typeof self !== 'undefined' ? self : this);
+
+</script>
+<script>
+/* OIL FILM 検証 v0.9（v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
+(function (root) {
+  'use strict';
+  var C = root.OilContour || (typeof require !== 'undefined' ? require('./contour.js') : null);
+  var FPS = 60, W = 390, H = 800;
+  function mk(circles) { var s = new C.Sim(W, H); circles.forEach(function (c) { s.world.addCircle(c[0], c[1], c[2]); }); return s; }
+  function run(s, sec) { for (var i = 0, n = Math.round(sec * FPS); i < n; i++) s.frame(1 / FPS); }
+  function trace(s, pts, speed, hold) {
+    s.down(pts[0][0], pts[0][1]); run(s, 0.12);
+    for (var k = 1; k < pts.length; k++) {
+      var x0 = pts[k - 1][0], y0 = pts[k - 1][1], x1 = pts[k][0], y1 = pts[k][1];
+      var n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / speed * FPS));
+      for (var f = 1; f <= n; f++) { s.move(x0 + (x1 - x0) * f / n, y0 + (y1 - y0) * f / n); s.frame(1 / FPS); }
+    }
+    if (hold !== -1) run(s, 0.1); if (hold > 0) run(s, hold);   // -1：なぞり終えたらすぐ離す
+    return s.up();
+  }
+  function cnt(s) { return s.world.drops.filter(function (d) { return d.A0 > 200; }).length; }
+  function aerr(s) { return Math.abs(s.world.totalArea() - s.world.totalA0()) / s.world.totalA0(); }
+  var PAIR = [[135, 400, 42], [255, 400, 42]];
+  var KIND = { CONNECT: 'つなぐ', CUT: '切る', DRAG: '引く', OUTSIDE: '外だけ', TAP: 'タップ', TOUCH_IN: '中で触れる', ENTER: '外から入る' };
+  var tests = [
+    { id: 'A01', name: '放置（いろいろの配置で20秒）', fn: function () {
+      var s = new C.Sim(W, H); C.scatter(s.world, 5); var n0 = s.world.drops.length; run(s, 20);
+      var vm = 0; s.world.drops.forEach(function (d) { for (var i = 0; i < d.x.length; i++) vm = Math.max(vm, Math.hypot(d.vx[i], d.vy[i])); });
+      return { ok: s.world.drops.length === n0 && vm < 20, detail: 'しずくの数 ' + n0 + ' → ' + s.world.drops.length + '、輪郭の最大の速さ ' + vm.toFixed(2) + ' px/秒（引き合ってゆっくり寄るだけ。合体しない）' };
+    } },
+    { id: 'A02', name: '油の量の保存（外から切る前後）', fn: function () {
+      var s = mk([[195, 400, 42]]), A0 = s.world.totalA0(); trace(s, [[195, 330], [195, 470]], 200, -1); run(s, 1);
+      return { ok: aerr(s) < 1e-4 && Math.abs(s.world.totalA0() + s.world.lostArea - A0) < 1e-6, detail: '輪郭が囲む面積と油の量の差 ' + aerr(s).toExponential(1) + '、消えた粒 ' + s.world.lostArea.toFixed(1) + ' px²' };
+    } },
+    { id: 'A03', name: '丸く戻る速さ（楕円に近いしずく・参考）', info: true, fn: function () {
+      var s = new C.Sim(W, H); s.world.addCircle(195, 400, 50, [[2, 0.35, 0]]); var t = 0;
+      for (var f = 1; f <= 300 && !t; f++) {
+        s.frame(1 / 60); var d = s.world.drops[0], n = d.x.length, cx = 0, cy = 0, mn = 1e9, mx = 0, i;
+        for (i = 0; i < n; i++) { cx += d.x[i]; cy += d.y[i]; } cx /= n; cy /= n;
+        for (i = 0; i < n; i++) { var r = Math.hypot(d.x[i] - cx, d.y[i] - cy); mn = Math.min(mn, r); mx = Math.max(mx, r); }
+        if (mx / mn < 1.08) t = f / 60;
+      }
+      return { ok: true, detail: '半径の最大と最小の比が 1.08 を切るまで ' + (t ? t.toFixed(2) + ' 秒' : '5秒以上') };
+    } },
+    { id: 'B02', name: 'つなぐ：A の中から B へゆっくり（90 px/秒）', fn: function () {
+      var s = mk(PAIR), g = trace(s, [[160, 400], [262, 400]], 90, 0.4); run(s, 1.5);
+      return { ok: cnt(s) === 1, detail: '判定「' + KIND[g.kind] + '」、しずくの数 2 → ' + cnt(s) };
+    } },
+    { id: 'B03', name: '2つから離れた所を同じようになぞる', fn: function () {
+      var s = mk(PAIR), g = trace(s, [[140, 560], [260, 560]], 90, 0.3); run(s, 1.5);
+      return { ok: cnt(s) === 2, detail: '判定「' + KIND[g.kind] + '」、しずくの数 2 → ' + cnt(s) };
+    } },
+    { id: 'B04', name: '切る：外から外へ横切る（200 px/秒）', fn: function () {
+      var s = mk([[195, 400, 42]]), g = trace(s, [[195, 330], [195, 470]], 200, -1); run(s, 1.5);
+      return { ok: cnt(s) === 2, detail: '判定「' + KIND[g.kind] + '」、しずくの数 1 → ' + cnt(s) };
+    } },
+    { id: 'B04s', name: '同じ経路をゆっくり（50 px/秒・参考）', info: true, fn: function () {
+      var s = mk([[195, 400, 42]]), g = trace(s, [[195, 330], [195, 470]], 50); run(s, 1.5);
+      return { ok: true, detail: 'しずくの数 1 → ' + cnt(s) + '（ゆっくりだと、箸の油の膜にくっついて一緒に動く）' };
+    } },
+    { id: 'B05', name: 'しずくの外側だけをなぞる', fn: function () {
+      var s = mk([[195, 400, 42]]), g = trace(s, [[120, 340], [280, 340]], 200); run(s, 1);
+      return { ok: cnt(s) === 1, detail: '判定「' + KIND[g.kind] + '」、しずくの数 1 → ' + cnt(s) };
+    } },
+    { id: 'B06', name: '引く：中からゆっくり（60 px/秒）', fn: function () {
+      var s = mk([[150, 400, 45]]), g = trace(s, [[150, 400], [300, 400]], 60); run(s, 1.5);
+      var d = s.world.drops[0], cx = d.x.reduce(function (a, b) { return a + b; }, 0) / d.x.length;
+      return { ok: cnt(s) === 1 && cx > 220, detail: 'しずくの数 ' + cnt(s) + '、中心が x=150 → ' + cx.toFixed(0) + '（箸についてくる）' };
+    } },
+    { id: 'B07', name: '引く：中から速く（600 px/秒）', fn: function () {
+      var s = mk([[150, 400, 45]]), g = trace(s, [[150, 400], [320, 230]], 600); run(s, 1.5);
+      var a = s.world.drops.filter(function (d) { return d.A0 > 200; }).map(function (d) { return Math.round(d.A0); });
+      return { ok: cnt(s) >= 2, detail: 'しずくの数 1 → ' + cnt(s) + '（面積 ' + a.join('・') + ' px²。ちぎれる）' };
+    } },
+    { id: 'B08', name: 'しずくの外に箸を置いて離す', fn: function () {
+      var s = mk([[195, 400, 42]]), d0 = s.world.drops[0], c0 = d0.x.reduce(function (a, b) { return a + b; }, 0) / d0.x.length;
+      s.down(258, 400); run(s, 1); s.up(); run(s, 1);
+      var d = s.world.drops[0], c1 = d.x.reduce(function (a, b) { return a + b; }, 0) / d.x.length;
+      return { ok: Math.abs(c1 - c0) < 1, detail: '中心の移動 ' + (c1 - c0).toFixed(2) + ' px（箸へ吸い寄せられない）' };
+    } },
+    { id: 'B09', name: '2つの間を1回タップ', fn: function () {
+      var s = mk(PAIR); s.down(195, 400); run(s, 0.3); s.up(); run(s, 1.5);
+      return { ok: cnt(s) === 2, detail: 'しずくの数 2 → ' + cnt(s) };
+    } },
+    { id: 'B11', name: '速くぶつける（260 px/秒）', fn: function () {
+      var s = mk([[135, 400, 40], [235, 400, 40]]), d = s.world.drops[0];
+      for (var i = 0; i < d.vx.length; i++) d.vx[i] = 260; run(s, 2);
+      var cx = s.world.drops.map(function (q) { return q.x.reduce(function (a, b) { return a + b; }, 0) / q.x.length; });
+      var moved = Math.abs(cx[1] - 235);
+      return { ok: cnt(s) === 2 && moved < 40, detail: 'しずくの数 2 → ' + cnt(s) + '（弾く）。ぶつけられた側の移動 ' + moved.toFixed(0) + ' px' };
+    } },
+    { id: 'B12', name: '箸で押しつけるだけ（箸の膜が相手に触れない）', fn: function () {
+      var s = mk([[135, 400, 40], [235, 400, 40]]), g = trace(s, [[80, 400], [96, 400], [130, 400]], 25, 0.8); run(s, 1);
+      return { ok: cnt(s) === 2, detail: 'しずくの数 2 → ' + cnt(s) + '（押しても合体しない。つながるのは箸の膜が両方に触れたときだけ）' };
+    } },
+    { id: 'B17', name: '小さな粒の集まりの1つに触れる', fn: function () {
+      var c = [[195, 400]], k; for (k = 0; k < 6; k++) c.push([195 + 21 * Math.cos(k * Math.PI / 3), 400 + 21 * Math.sin(k * Math.PI / 3)]);
+      var s = new C.Sim(W, H); c.forEach(function (p) { s.world.addCircle(p[0], p[1], 9); }); run(s, 1);
+      var n0 = s.world.drops.length; s.down(195 + 21, 400); run(s, 0.4); s.up(); run(s, 1);
+      return { ok: s.world.drops.length >= n0 - 1, detail: '粒の数 ' + n0 + ' → ' + s.world.drops.length + '（触れた粒の近くだけがつながり、まとめて1つにならない）' };
+    } },
+    { id: 'B13', name: '近い2つ（すき間16 px）の間を箸で触れる', fn: function () {
+      var s = mk([[147, 400, 40], [243, 400, 40]]); s.down(195, 400); run(s, 0.4); s.up(); run(s, 1);
+      return { ok: cnt(s) === 1, detail: 'しずくの数 2 → ' + cnt(s) + '（箸の油の膜が両方に触れて、つながる）' };
+    } },
+    { id: 'B14', name: '重なった2つ（箸なし）', fn: function () {
+      var s = mk([[180, 400, 40], [230, 400, 30]]), A0 = s.world.totalA0(); run(s, 1);
+      var A = s.world.drops[0], B = s.world.drops[1], over = 0;
+      if (B) for (var i = 0; i < A.x.length; i++) if (s.world.dropAt(A.x[i], A.y[i]) === B) over++;
+      return { ok: cnt(s) === 2 && over === 0, detail: 'しずくの数 2 → ' + cnt(s) + '、相手の内側にある点 ' + over + '（押し離す。箸がなければ合体しない）' };
+    } },
+    { id: 'B15', name: '近くのしずくが引き合う（すき間20 px・箸なし）', fn: function () {
+      var s = mk([[145, 400, 40], [245, 400, 40]]); run(s, 5);
+      var d = s.world.drops, c0 = d[0].x.reduce(function (a, b) { return a + b; }, 0) / d[0].x.length, c1 = d[1].x.reduce(function (a, b) { return a + b; }, 0) / d[1].x.length;
+      var gap = c1 - c0 - 80;
+      return { ok: cnt(s) === 2 && gap < 10, detail: '5秒後のすき間 ' + gap.toFixed(1) + ' px、しずくの数 ' + cnt(s) + '（寄り添うが、合体しない）' };
+    } },
+    { id: 'B16', name: '縁の近くのしずく（すき間12 px）', fn: function () {
+      var s = mk([[52, 400, 40]]); run(s, 4);
+      var d = s.world.drops[0], mn = Math.min.apply(null, d.x);
+      return { ok: mn < 4, detail: '4秒後の縁とのすき間 ' + mn.toFixed(1) + ' px（縁に寄る）' };
+    } },
+    { id: 'B10', name: '同じ初期状態・同じ軌跡の再生', fn: function () {
+      var a = mk(PAIR), b = mk(PAIR), d = 0;
+      trace(a, [[160, 400], [262, 400], [262, 300]], 90, 0.2); trace(b, [[160, 400], [262, 400], [262, 300]], 90, 0.2);
+      var A = a.world.drops, B = b.world.drops;
+      if (A.length !== B.length) d = Infinity;
+      else for (var k = 0; k < A.length; k++) for (var i = 0; i < A[k].x.length; i++) d = Math.max(d, Math.abs(A[k].x[i] - B[k].x[i]));
+      return { ok: d === 0, detail: '2回の結果の差の最大 ' + d };
+    } }
+  ];
+  function runOilTests(onEach, onDone) {
+    var i = 0;
+    (function next() {
+      if (i >= tests.length) { if (onDone) onDone(); return; }
+      var t = tests[i++], t0 = Date.now(), r;
+      try { r = t.fn(); } catch (err) { r = { ok: false, detail: String(err) }; }
+      onEach({ id: t.id, name: t.name, info: !!t.info, ok: r.ok, detail: r.detail, sec: (Date.now() - t0) / 1000 });
+      setTimeout(next, 0);
+    })();
+  }
+  root.runOilTests = runOilTests;
+  if (typeof module !== 'undefined' && module.exports) module.exports = { runOilTests: runOilTests, tests: tests };
+})(typeof self !== 'undefined' ? self : this);
+
+</script>
+<script>
+'use strict';
+(function () {
+const $ = (s) => document.querySelector(s);
+const C = window.OilContour;
+
+const opt = { scene: 'mix', ring: true, color: 'amber' };
+try { Object.assign(opt, JSON.parse(localStorage.getItem('oilfilm.opt') || '{}')); } catch (e) {}
+function saveOpt() { try { localStorage.setItem('oilfilm.opt', JSON.stringify(opt)); } catch (e) {} }
+
+const cv = $('#scene');
+const ctx = cv.getContext('2d', { alpha: false });
+if (!ctx) { document.body.insertAdjacentHTML('beforeend', '<div class="fatal">この端末では描画（Canvas）が使えません。</div>'); return; }
+
+let VW = 0, VH = 0, DPR = 1, sim = null, seed = (Math.random() * 1e9) >>> 0;
+let paused = false, showNodes = false, bgCv = null, A00 = 0;
+
+// ---------------- 配置 ----------------
+function layout() {
+  VW = window.innerWidth; VH = window.innerHeight; DPR = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
+  buildBackground();
+  if (sim) { sim.world.w = VW; sim.world.h = VH; }
+}
+function build(keepSeed, saved) {
+  if (!keepSeed) seed = (Math.random() * 1e9) >>> 0;
+  sim = new C.Sim(VW, VH);
+  if (saved) restore(saved);
+  else if (opt.scene === 'practice') C.practice(sim.world); else C.scatter(sim.world, seed);
+  A00 = sim.world.totalA0();
+  evSeen = 0; setCount(sim.world.drops.length, false);
+}
+
+// ---------------- 背景（墨色の液面。起動時に1回だけ作る） ----------------
+function buildBackground() {
+  const w = Math.max(2, Math.round(VW / 4)), h = Math.max(2, Math.round(VH / 4));
+  bgCv = document.createElement('canvas'); bgCv.width = w; bgCv.height = h;
+  const c = bgCv.getContext('2d');
+  const g = c.createRadialGradient(w * 0.42, h * 0.38, 0, w * 0.5, h * 0.5, Math.hypot(w, h) * 0.62);
+  g.addColorStop(0, '#14272a'); g.addColorStop(0.55, '#0c1a1c'); g.addColorStop(1, '#060d0e');
+  c.fillStyle = g; c.fillRect(0, 0, w, h);
+}
+
+// ---------------- 描画：輪郭の線と薄い塗り ----------------
+function tracePath(X, Y) {
+  const n = X.length;
+  ctx.beginPath();
+  // 点と点の中点を通る二次曲線（なめらかな閉じた輪郭）
+  let mx = 0.5 * (X[n - 1] + X[0]), my = 0.5 * (Y[n - 1] + Y[0]);
+  ctx.moveTo(mx, my);
+  for (let i = 0; i < n; i++) {
+    const j = i + 1 < n ? i + 1 : 0;
+    ctx.quadraticCurveTo(X[i], Y[i], 0.5 * (X[i] + X[j]), 0.5 * (Y[i] + Y[j]));
+  }
+  ctx.closePath();
+}
+// 油の色：塗り（中心・縁）、輪郭の線、光沢
+const PALETTES = {
+  amber: { core: 'rgba(206, 128, 52, 0.30)', edge: 'rgba(232, 150, 70, 0.14)', line: 'rgba(246, 178, 104, 0.95)', gloss: '255, 236, 210' },
+  chili: { core: 'rgba(196, 66, 36, 0.32)', edge: 'rgba(226, 92, 52, 0.16)', line: 'rgba(242, 124, 84, 0.95)', gloss: '255, 222, 204' },
+  pearl: { core: 'rgba(200, 222, 224, 0.16)', edge: 'rgba(214, 232, 236, 0.07)', line: 'rgba(226, 240, 242, 0.92)', gloss: '255, 255, 255' },
+  gold:  { core: 'rgba(227, 184, 108, 0.20)', edge: 'rgba(227, 184, 108, 0.10)', line: 'rgba(238, 201, 132, 0.92)', gloss: '255, 246, 220' }
+};
+// 表示用の輪郭：止まりかけのしずくの細かな揺れ（0.1〜0.3 px）だけをならす。大きく動く点はそのまま追う
+const SMOOTH_PX = 2, SMOOTH_MIN = 0.12;
+function shownContour(d, raw) {
+  const X = d.x, Y = d.y, n = X.length;
+  if (raw || !d._sx || d._sx.length !== n) { d._sx = X.slice(); d._sy = Y.slice(); return; }
+  const sx = d._sx, sy = d._sy;
+  for (let i = 0; i < n; i++) {
+    const ex = X[i] - sx[i], ey = Y[i] - sy[i], a = Math.min(1, SMOOTH_MIN + Math.sqrt(ex * ex + ey * ey) / SMOOTH_PX);
+    sx[i] += ex * a; sy[i] += ey * a;
+  }
+}
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.drawImage(bgCv, 0, 0, VW, VH);
+  const drops = sim.world.drops, pal = PALETTES[opt.color] || PALETTES.amber;
+  ctx.lineJoin = 'round';
+  for (let k = 0; k < drops.length; k++) {
+    const d = drops[k], n = d.x.length;
+    shownContour(d, sim.world.tip.on && sim.world.att && sim.world.att[d.id]);
+    const X = d._sx, Y = d._sy;
+    let cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) { cx += X[i]; cy += Y[i]; }
+    cx /= n; cy /= n;
+    const R = Math.sqrt(d.A0 / Math.PI);
+    tracePath(X, Y);
+    // 塗り：中心が濃く、縁へ薄く（レンズ状の油の厚み）
+    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.15);
+    fg.addColorStop(0, pal.core); fg.addColorStop(1, pal.edge);
+    ctx.fillStyle = fg; ctx.fill();
+    ctx.lineWidth = 0.9; ctx.strokeStyle = pal.line; ctx.stroke();
+  }
+  if (showNodes) {
+    ctx.fillStyle = 'rgba(185, 220, 214, 0.9)';
+    for (const d of drops) for (let i = 0; i < d.x.length; i++) { ctx.fillRect(d.x[i] - 1, d.y[i] - 1, 2, 2); }
+  }
+  const t = sim.world.tip;
+  if (t.on && opt.ring) {
+    ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 6.2832);
+    ctx.fillStyle = 'rgba(232, 238, 233, 0.08)'; ctx.fill();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(232, 238, 233, 0.5)'; ctx.stroke();
+  }
+}
+
+// ---------------- 数と知らせ ----------------
+let islCount = 0, evSeen = 0, storyTimer = 0, lastGesture = null, gestures = 0, upAt = -1e9;
+function story(msg) { const s = $('#story'); s.textContent = msg; s.classList.remove('fade'); clearTimeout(storyTimer); storyTimer = setTimeout(() => s.classList.add('fade'), 3200); }
+function setCount(n, pulse) {
+  islCount = n; $('#islN').textContent = n;
+  if (pulse) { const chip = $('#islChip'); chip.classList.remove('pulse'); void chip.offsetWidth; chip.classList.add('pulse'); }
+}
+function checkEvents() {
+  const w = sim.world, ev = w.events;
+  for (; evSeen < ev.length; evSeen++) {
+    const e = ev[evSeen], recent = w.tip.on || performance.now() - upAt < 2500;
+    if (!recent) continue;
+    if (e.type === 'merge') story('つながりました');
+    else if (w.tip.on ? !!w.tip.holder : (lastGesture && (lastGesture.kind === 'DRAG' || lastGesture.kind === 'CONNECT'))) story('ちぎれました');
+    else story('切れました');
+  }
+  if (ev.length > 200) { ev.splice(0, ev.length - 50); evSeen = ev.length; }
+  const n = w.drops.length;
+  if (n !== islCount) setCount(n, true);
+}
+
+// ---------------- 入力 ----------------
+let pid = null;
+cv.addEventListener('pointerdown', (e) => {
+  if (pid !== null || paused) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  pid = e.pointerId; try { cv.setPointerCapture(pid); } catch (err) {}
+  hideGuide();
+  sim.down(e.clientX, e.clientY);
+  e.preventDefault();
+});
+cv.addEventListener('pointermove', (e) => { if (e.pointerId === pid) sim.move(e.clientX, e.clientY); });
+function release(e) {
+  if (e.pointerId !== pid) return;
+  pid = null;
+  const g = sim.up(); upAt = performance.now();
+  if (g) { lastGesture = g; gestures++; if (gestures === 3) setTimeout(() => $('#hint').classList.add('fade'), 1500); }
+}
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+cv.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ---------------- UI ----------------
+function setPaused(v) {
+  paused = v; $('#pausedChip').hidden = !v;
+  $('#btnPause').setAttribute('aria-pressed', String(v)); $('#btnPause').setAttribute('aria-label', v ? '再開' : '一時停止');
+  $('#pauseIcon').innerHTML = v ? '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>' : '<path d="M9 6v12M15 6v12"/>';
+  if (v && pid !== null) { sim.up(); pid = null; }
+}
+$('#btnPause').addEventListener('click', () => setPaused(!paused));
+const sheet = $('#sheet'), backdrop = $('#backdrop');
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.repeat && sheet.hidden) { e.preventDefault(); setPaused(!paused); }
+});
+const guide = $('#guide');
+function showGuide() {
+  guide.innerHTML = '指は、汁に立てた箸の先です。<br>先には油の膜が付いていて、<br>そっと触れたしずくどうしをつなぎます。<span class="sub">画面に触れると閉じます</span>';
+  guide.hidden = false; guide.classList.remove('fade');
+  $('#hint').classList.remove('fade'); gestures = 0;
+}
+function hideGuide() { if (guide.hidden) return; guide.classList.add('fade'); setTimeout(() => { guide.hidden = true; }, 500); }
+function openSheet(v) { sheet.hidden = !v; backdrop.hidden = !v; }
+$('#btnSettings').addEventListener('click', () => openSheet(true));
+$('#btnClose').addEventListener('click', () => openSheet(false));
+backdrop.addEventListener('click', () => openSheet(false));
+function segInit(id, cur, onPick) {
+  const el = $(id);
+  const mark = (v) => el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(v))));
+  mark(cur);
+  el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mark(b.dataset.v); onPick(b.dataset.v); saveOpt(); });
+}
+segInit('#optScene', opt.scene, (v) => { opt.scene = v; build(false); openSheet(false); });
+segInit('#optColor', opt.color, (v) => { opt.color = v; });
+const optRing = $('#optRing'); optRing.checked = opt.ring;
+optRing.addEventListener('change', () => { opt.ring = optRing.checked; saveOpt(); });
+$('#btnScatter').addEventListener('click', () => { build(false); openSheet(false); });
+$('#btnRestart').addEventListener('click', () => { build(true); openSheet(false); });
+$('#btnGuide').addEventListener('click', () => { openSheet(false); showGuide(); });
+let verTaps = 0, verTimer = 0;
+$('#ver').addEventListener('click', () => { verTaps++; clearTimeout(verTimer); verTimer = setTimeout(() => { verTaps = 0; }, 1500); if (verTaps >= 5) { verTaps = 0; $('#devSec').hidden = false; } });
+$('#btnDevHide').addEventListener('click', () => { $('#devSec').hidden = true; });
+$('#optDebug').addEventListener('change', (e) => { $('#debug').hidden = !e.target.checked; });
+$('#optRaw').addEventListener('change', (e) => { showNodes = e.target.checked; });
+let testsDone = false;
+$('#testBox').addEventListener('toggle', () => {
+  if (!$('#testBox').open || testsDone) return; testsDone = true;
+  const vl = $('#vlist'); vl.textContent = '実行中…';
+  let first = true, pass = 0, fail = 0;
+  setTimeout(() => window.runOilTests((r) => {
+    if (first) { vl.textContent = ''; first = false; }
+    if (!r.info) { if (r.ok) pass++; else fail++; }
+    const div = document.createElement('div'); div.className = r.info ? 'info' : r.ok ? '' : 'ng';
+    div.innerHTML = `<b>${r.id} ${r.info ? '参考' : r.ok ? '合格' : '不合格'}</b>　${r.name}<br>${r.detail}`;
+    vl.appendChild(div);
+  }, () => { const div = document.createElement('div'); div.innerHTML = `<b>まとめ</b>　合格 ${pass}・不合格 ${fail}（画面 390×800 px）`; vl.appendChild(div); }), 60);
+});
+const P = C.DEFAULTS;
+$('#sweepMap').innerHTML = [
+  '<em>しずく</em>   点の輪。点の間隔 ' + P.hMin + '〜' + P.hMax + ' px',
+  '<em>界面張力</em> S = ' + P.S + ' px³/s²（半径 50 px の楕円が約1秒で丸く戻る）',
+  '<em>汁の抵抗</em> ' + P.c + ' /秒　<em>油の粘り</em> ' + P.beta + ' /秒（全体）・' + P.nuL + ' /秒（輪郭に沿って）',
+  '<em>ぶつかり</em> 汁の膜の粘りで、ぶつかった点の速さの差を ' + P.kDamp + ' /秒で減らす',
+  '<em>汁の膜</em>   ' + P.dRep + ' px で押し返す（押しつけても合体しない）',
+  '<em>小さな粒</em> 半径 ' + P.rRigid + ' px より小さいしずくは丸ごと動かし、形は ' + P.tRound + ' 秒で丸に戻す',
+  '<em>眠り</em>     丸いしずく（周長が同じ面積の円の ' + P.sleepRound + ' 倍未満）で、速さをならした値が',
+  '           毎秒 ' + P.vSleep + ' px 未満の状態が ' + P.tSleep + ' 秒続いたら止める。',
+  '           箸が近づくか、毎秒 ' + P.vWake + ' px より速い点に触れられたら動き出す',
+  '<em>くびれ</em>   油をはさんで ' + P.dPinch + ' px より近いと分かれる',
+  '<em>ちぎれ</em>   変形の速さ ' + P.devTear + ' px/秒・縦横比 ' + P.aTear + ' を超えると、',
+  '           いちばん細い所で切れる（小さいほうが ' + P.minPiece + ' px² 以上のとき）',
+  '<em>箸</em>       半径 ' + P.tipR + ' px。先は油で濡れている。毎秒 ' + P.vWet + ' px より遅く、',
+  '           先から 1.5 px 以内に ' + P.tWet + ' 秒触れたしずくは箸とつながり、2つ以上なら1つになる',
+  '           つながったしずくは、まわり ' + P.grabL + ' px の油を引きずられる（' + P.grab + ' /秒）',
+  '           つながっていないしずくは、箸に押される（速く横切ると切れる）',
+  '<em>重なり</em>   相手の内側に入った点を外へ押し出す（合体はしない）',
+  '<em>引き合い</em> しずく同士・縁と ' + P.gAtt + ' px/s² × exp(−すき間/' + P.lAtt + ' px) で寄る。',
+  '           触れたあとも弱く押し合い、接したところが少し平らになる',
+  '<em>ねじれ</em>   輪郭が自分と交わったら、間の点の並びを逆にしてほどく',
+  '<em>小さな粒</em> ' + P.minArea + ' px² より小さいと消す（消えた量は記録）'
+].join('\n');
+
+function updDbg(ms) {
+  const w = sim.world, g = lastGesture;
+  const KIND = { CONNECT: 'つなぐ', CUT: '切る', DRAG: '引く', OUTSIDE: '外だけ', TAP: 'タップ', TOUCH_IN: '中で触れる', ENTER: '外から入る' };
+  const A = w.totalArea(), A0 = w.totalA0();
+  const rows = [
+    ['しずく', w.drops.length],
+    ['輪郭の点', w.nodeCount()],
+    ['油の量', A0.toFixed(0) + ' px²'],
+    ['面積の誤差', ((A - A0) / A0).toExponential(1)],
+    ['消えた粒', w.lostArea.toFixed(1) + ' px²'],
+    ['はじめとの差', (A0 + w.lostArea - A00).toFixed(3) + ' px²'],
+    ['刻み', sim.lastSub],
+    ['計算', ms.toFixed(2) + ' ms/コマ'],
+    ['箸', w.tip.on ? (w.tip.holder ? 'しずくの中' : 'しずくの外') + '・つながり ' + Object.keys(w.att).length : '—'],
+    ['最後の操作', g ? KIND[g.kind] || g.kind : '—'],
+    ['経路', g ? g.seq : '—'],
+    ['速さの最大', g ? g.vmax.toFixed(0) + ' px/秒' : '—'],
+  ];
+  $('#dbg').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+}
+
+// ---------------- 状態の保存と、戻るボタン ----------------
+// 閉じても、次に開いたときに同じしずくの並びから始める（この端末のこのブラウザだけ）
+const SAVE_KEY = 'oilfilm.state';
+function saveState() {
+  try {
+    const w = sim.world;
+    const drops = w.drops.map((d) => ({ a: Math.round(d.A0 * 10) / 10, x: d.x.map((v) => Math.round(v * 10) / 10), y: d.y.map((v) => Math.round(v * 10) / 10) }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, w: VW, h: VH, seed, drops }));
+  } catch (e) {}
+}
+function loadState() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s && s.v === 1 && s.drops && s.drops.length ? s : null; } catch (e) { return null; } }
+function restore(s) {
+  const sx = VW / s.w, sy = VH / s.h;        // 画面の大きさが変わっていたら、位置だけ合わせる
+  for (const q of s.drops) {
+    const d = sim.world.addCircle(0, 0, 1);
+    d.x = q.x.map((v) => v * sx); d.y = q.y.map((v) => v * sy);
+    d.vx = d.x.map(() => 0); d.vy = d.y.map(() => 0); d.A0 = q.a * sx * sy;
+  }
+  seed = s.seed || seed;
+}
+setInterval(saveState, 3000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(); });
+window.addEventListener('pagehide', saveState);
+
+// 戻るボタン：1回目は知らせるだけ。2秒以内にもう一度押すと閉じる（アプリによっては効かないことがある）
+let backAt = -1e9;
+function armBack() { try { history.pushState({ oilfilm: 1 }, ''); } catch (e) {} }
+window.addEventListener('popstate', () => {
+  if (!sheet.hidden) { openSheet(false); armBack(); return; }
+  const now = performance.now();
+  if (now - backAt < 2000) { saveState(); try { history.back(); } catch (e) {} return; }
+  backAt = now; story('もう一度「戻る」で閉じます'); armBack();
+});
+armBack();
+
+// ---------------- ループ ----------------
+let last = performance.now(), frameNo = 0, msAvg = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+  if (!paused && dt > 0) {
+    const t0 = performance.now();
+    sim.frame(dt);
+    msAvg += (performance.now() - t0 - msAvg) * 0.05;
+  }
+  draw();
+  checkEvents();
+  frameNo++;
+  if (!$('#debug').hidden && frameNo % 15 === 0) updDbg(msAvg);
+}
+let resizeTimer = 0;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(layout, 150); });
+
+layout();
+build(true, loadState());
+let seen = false; try { seen = localStorage.getItem('oilfilm.seen') === '1'; localStorage.setItem('oilfilm.seen', '1'); } catch (e) {}
+showGuide();
+if (seen) setTimeout(hideGuide, 2600);
+setTimeout(() => $('#hint').classList.add('fade'), 26000);
+window.__oil = { get sim() { return sim; } };
+requestAnimationFrame((t) => { last = t; requestAnimationFrame(loop); });
+})();
+
+</script>
