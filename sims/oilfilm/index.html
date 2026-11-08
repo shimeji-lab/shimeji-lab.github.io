@@ -1,12 +1,15 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OIL FILM"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>OIL FILM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <!--
-  OIL FILM 油膜シミュレータ  v0.10「CONNECT · CUT · STRETCH」
+  OIL FILM 油膜シミュレータ  v0.11「CONNECT · CUT · STRETCH」
   準拠：OIL FILM 詳細設計書 v0.2（操作仕様）。計算は v0.3 で輪郭モデルに変更
   モデル：油のしずくの輪郭（点の輪）だけを追う。界面張力（線張力）・面積の保存・油の粘り・汁の抵抗・
           しずく同士の汁の膜（押し返しと、接触が続くと合体）・くびれでの分裂・箸（円い固体と付着）
 
   更新履歴
+  v0.11 2026-11-08 器の縁のしずくは、真ん中と違う動きに（エンジン v0.11）。縁の近くでは汁が壁に引き止められて流れが弱まる（境界層）。
+                   壁に触れたしずくは油が壁を濡らして貼りつき、弱い傾きでは動かない。強く傾けると壁に沿って滑る。
+                   貼りつく力は触れている長さに、流す力は油の量に比例するので、小さなしずくほど貼りつきやすい。自動検証 B20・B21 を追加
   v0.10 2026-11-08 スマホを傾けたり揺らしたりすると、汁ごと油が流れるように（スマホのときだけ。エンジン v0.10）。
                    加速度センサーの重力込みの値から、傾きの成分と、どんぶりの動きと逆向きの慣性を、しずく全体にかかる力として加える。
                    持ったままの傾きには 2.5 秒かけて慣れる（ずっと流れ続けない）。設定に「傾けて揺らす」。自動検証 B18・B19 を追加
@@ -271,6 +274,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <details class="hist">
       <summary>更新履歴</summary>
+      <p class="ver">v0.11（2026-11-08）器の縁のしずくは流れにくく、壁に貼りつく。強く傾けると壁に沿って滑る。小さなしずくほど貼りつきやすい</p>
       <p class="ver">v0.10（2026-11-08）スマホを傾けたり揺らしたりすると、汁ごと油が流れるように（スマホのときだけ。設定の「傾けて揺らす」で切れます）</p>
       <p class="ver">v0.9（2026-11-07）押しつぶされたしずくが三角や角ばった形のまま固まる不具合を修正。小さな粒は丸に戻り、止めるのは丸いしずくだけ。止まりかけの輪郭の細かな揺れは描画でならす</p>
       <p class="ver">v0.8（2026-11-07）箸の当たり判定を小さく。押しつけただけでは合体しない。密集した粒が震えないように（小さな粒は変形させず、落ち着いたしずくは止める）</p>
@@ -284,17 +288,20 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
   </section>
-  <p class="ver" id="ver"><b>OIL FILM v0.10</b> CONNECT · CUT · STRETCH<br>
+  <p class="ver" id="ver"><b>OIL FILM v0.11</b> CONNECT · CUT · STRETCH<br>
   油のしずくの輪郭だけを、点の輪として計算しています。点を引き寄せる界面張力がしずくを丸くし、輪郭が囲む面積を毎回そろえて油の量を保ちます。しずくの間にはさまった汁の膜が押し返すので、ぶつけると軽く弾き、重なりかけても押し離します。箸が関わらないかぎり、しずく同士は合体しません。近くのしずく同士や画面の縁とは、ゆるく引き合って寄り添います（液面に浮いたもの同士が寄り合う、チェリオス効果と呼ばれる現象の近似）。寄り添ったしずくは弱く押し合い、接したところが少し平らになります。輪郭どうしが油をはさんで近づくと、そこで2つに分かれます。<br>
   指は、汁に立てた箸の先です。先には油の膜が付いています。ゆっくり触れたしずくは箸の膜とつながって一緒に動き、2つ以上つながると箸を通して1つになります。速く動かした箸は膜とつながらず、外から横切るとしずくを切ります。<br>
-  この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。スマホでは、傾けたり揺らしたりしたときの力（傾きの重力と、どんぶりの動きに取り残される慣性）を、すべての油に同じ強さでかけています。持ったままの傾きには2.5秒ほどで慣れるので、流れ続けることはありません。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
+  この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。スマホでは、傾けたり揺らしたりしたときの力（傾きの重力と、どんぶりの動きに取り残される慣性）を、すべての油に同じ強さでかけています。持ったままの傾きには2.5秒ほどで慣れるので、流れ続けることはありません。器の縁では汁が壁に引き止められるので、縁に近いほど流れを弱めています。壁に触れたしずくは、油が壁を濡らして貼りつき、壁に触れている長さに比例する力で止まります（流す力は油の量に比例するので、小さなしずくほど貼りつきやすい）。それより強く傾けると、壁に沿って滑ります。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
 </section>
 
 <script>
 /* =====================================================================
- * OIL FILM contour engine  v0.10
+ * OIL FILM contour engine  v0.11
  *   描画非依存。Node でも単体実行できる（検証用）。単位は画面の px と秒。
  *
+ *   v0.11 2026-11-08 縁：傾き・揺れの力を縁からの距離で弱める（wallLayer・wallFloor）。壁に触れたしずくは、
+ *                    流す力の平均 drive が pinS × 触れている長さ ÷ 面積 より弱ければ、しずく全体の動きを kPin で止める。
+ *                    強ければ kSlide の抵抗で壁に沿って滑る（形が丸く戻る動きは止めない）。
  *   v0.10 2026-11-08 どんぶりの傾き・揺れ：world.body（px/s²）をすべての点に同じ加速度として加える。
  *                    bodyWake より強いと、眠ったしずくも起き、眠らない。
  *
@@ -332,7 +339,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 (function (root) {
   'use strict';
 
-  var ENGINE_VERSION = '0.10';
+  var ENGINE_VERSION = '0.11';
 
   function mulberry32(seed) {
     var a = seed >>> 0;
@@ -382,7 +389,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     gAtt: 40,        // しずく同士・しずくと縁が引き合う強さ（px/s²）。浮いたもの同士が寄るチェリオス効果の近似
     lAtt: 14,        // その届く距離（px。毛管長に当たる）
     minArea: 70,     // これより小さい粒は消える（px²。消えた量は記録する）
-    bodyWake: 40     // どんぶりの傾き・揺れの力がこれより強いと、眠ったしずくも動き出す（px/s²）
+    bodyWake: 40,    // どんぶりの傾き・揺れの力がこれより強いと、眠ったしずくも動き出す（px/s²）
+    wallLayer: 24,   // 縁の近くで汁の流れが弱まる幅（px）。壁に触れた汁は動けない（境界層）
+    wallFloor: 0.2,  // 縁ぎりぎりで残る流れの割合
+    pinS: 40000,     // 壁に貼りつく強さ（px³/s²）。触れている長さ × pinS ÷ 面積 より弱い力では動かない
+    kPin: 60,        // 貼りついたしずくの動きを止める速さ（1/s）
+    kSlide: 3        // 滑り出したあと、壁との間の抵抗（1/s）
   };
 
   var nextId = 1;
@@ -561,11 +573,21 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     // 2b) 引き合い：しずく同士と、しずくと画面の縁（メニスカスによる引力。距離 lAtt で弱まる）
     if (P.gAtt > 0) this.attract();
 
-    // 2c) どんぶりの傾き・揺れ：汁ごと動かされる油に、すべての点で同じ加速度がかかる（形は変えず、しずく全体を流す）
+    // 2c) どんぶりの傾き・揺れ：汁ごと動かされる油に加速度がかかる。
+    //     縁の近くでは汁が壁に引き止められて動きにくいので、縁からの距離で弱める（wallLayer・wallFloor）
     var bx = this.body.x || 0, by = this.body.y || 0, bodyOn = bx * bx + by * by > P.bodyWake * P.bodyWake;
-    if (bx || by) for (k = 0; k < drops.length; k++) {
-      d = drops[k]; n = d.x.length;
-      for (i = 0; i < n; i++) { d.ax[i] += bx; d.ay[i] += by; }
+    var WW = this.w, HH = this.h;
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length; d.drive = 0;
+      if (!(bx || by)) continue;
+      var dsx = 0, dsy = 0, dms = 0;
+      for (i = 0; i < n; i++) {
+        var gw = Math.min(d.x[i], WW - d.x[i], d.y[i], HH - d.y[i]);
+        var fw2 = P.wallFloor + (1 - P.wallFloor) * (1 - Math.exp(-Math.max(0, gw) / P.wallLayer));
+        d.ax[i] += bx * fw2; d.ay[i] += by * fw2;
+        dsx += d.m[i] * bx * fw2; dsy += d.m[i] * by * fw2; dms += d.m[i];
+      }
+      d.drive = Math.hypot(dsx, dsy) / dms;     // このしずくを流そうとする力の平均
     }
 
     // 3) 速度の更新：力、汁の抵抗、油の粘り、箸への付着
@@ -644,6 +666,22 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
         var rvx = 0, rvy = 0, rms = 0;
         for (i = 0; i < n; i++) { rvx += d.m[i] * d.vx[i]; rvy += d.m[i] * d.vy[i]; rms += d.m[i]; }
         rvx /= rms; rvy /= rms; for (i = 0; i < n; i++) { d.vx[i] = rvx; d.vy[i] = rvy; }
+      }
+      // 壁に触れたしずく：油が壁を濡らして貼りつく。流そうとする力が pinA より弱ければ、触れた所は止まる。
+      // 強ければ壁に沿って滑るが、壁との間の抵抗が残る。箸につながったしずくは箸が引きはがす
+      // 止める力は壁に触れている長さに比例し、流す力は油の量（面積）に比例する：小さなしずくほど貼りつきやすい。
+      // 止めるのはしずく全体の動きだけ（形が丸く戻る動きは止めない）
+      if (P.pinS > 0 && !(t.on && att[d.id])) {
+        var lc = 0;
+        for (i = 0; i < n; i++) if (Math.min(d.x[i], this.w - d.x[i], d.y[i], this.h - d.y[i]) < P.dWall + 1.5) lc += d.m[i] * P.h0;
+        if (lc > 0) {
+          var pinned = (d.drive || 0) < P.pinS * lc / d.A0;
+          var kp = 1 - Math.exp(-(pinned ? P.kPin : P.kSlide) * dt), wvx = 0, wvy = 0, wms = 0;
+          for (i = 0; i < n; i++) { wvx += d.m[i] * d.vx[i]; wvy += d.m[i] * d.vy[i]; wms += d.m[i]; }
+          wvx *= kp / wms; wvy *= kp / wms;
+          for (i = 0; i < n; i++) { d.vx[i] -= wvx; d.vy[i] -= wvy; }
+          d.pinned = pinned;
+        } else d.pinned = false;
       }
       // 1刻みで汁の膜より大きく動かない（相手の輪郭をすり抜けないように）
       var vcap = 0.45 * Math.max(P.dRep, P.dPinch) / dt;
@@ -1199,7 +1237,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
 </script>
 <script>
-/* OIL FILM 検証 v0.10（v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
+/* OIL FILM 検証 v0.11（v0.11 で B20 縁は流れにくい・B21 強く傾けると滑るを追加。v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
 (function (root) {
   'use strict';
   var C = root.OilContour || (typeof require !== 'undefined' ? require('./contour.js') : null);
@@ -1332,6 +1370,21 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       var x0 = s.world.drops[0].x[0]; s.world.body = { x: 300, y: 0 }; run(s, 0.3); s.world.body = { x: 0, y: 0 };
       var dx = s.world.drops[0].x[0] - x0;
       return { ok: slept && dx > 3, detail: '止まっていた ' + (slept ? 'はい' : 'いいえ') + '、0.3秒の揺れで右へ ' + dx.toFixed(1) + ' px' };
+    } },
+    { id: 'B20', name: '縁のしずくは流れにくい（壁に沿って 200 px/s²・2秒）', fn: function () {
+      var s = mk([[42, 300, 40], [195, 300, 40]]); run(s, 3);
+      var cy = function (d) { return d.y.reduce(function (a, b) { return a + b; }, 0) / d.y.length; };
+      var D = s.world.drops, e0 = cy(D[0]), c0 = cy(D[1]), touch = Math.min.apply(null, D[0].x);
+      s.world.body = { x: 0, y: 200 }; run(s, 2); s.world.body = { x: 0, y: 0 };
+      var de = cy(D[0]) - e0, dc = cy(D[1]) - c0;
+      return { ok: touch < 4 && dc > 40 && de < 0.25 * dc, detail: '縁に着いた（すき間 ' + touch.toFixed(1) + ' px）しずくは ' + de.toFixed(1) + ' px、真ん中のしずくは ' + dc.toFixed(1) + ' px 流れた（縁は貼りついて動きにくい）' };
+    } },
+    { id: 'B21', name: '強く傾けると、縁のしずくも壁に沿って滑る（600 px/s²・2秒）', fn: function () {
+      var s = mk([[42, 300, 40]]); run(s, 3);
+      var d = s.world.drops[0], cy = function () { return d.y.reduce(function (a, b) { return a + b; }, 0) / d.y.length; }, y0 = cy();
+      s.world.body = { x: 0, y: 600 }; run(s, 2); s.world.body = { x: 0, y: 0 };
+      var dy = cy() - y0, gap = Math.min.apply(null, d.x);
+      return { ok: s.world.drops.length === 1 && dy > 30 && gap < 6, detail: '壁に沿って ' + dy.toFixed(1) + ' px 滑った。壁とのすき間 ' + gap.toFixed(1) + ' px（離れずに滑る）' };
     } },
     { id: 'B10', name: '同じ初期状態・同じ軌跡の再生', fn: function () {
       var a = mk(PAIR), b = mk(PAIR), d = 0;
@@ -1583,6 +1636,8 @@ $('#sweepMap').innerHTML = [
   '           触れたあとも弱く押し合い、接したところが少し平らになる',
   '<em>傾き</em>     スマホのみ。−（重力込みの加速度）の画面に沿った成分から、' + 2.5 + ' 秒で追う基準を引き、',
   '           1 m/s² あたり 60 px/s²（上限 900）をすべての点に加える。' + P.bodyWake + ' px/s² を超えると眠ったしずくも起きる',
+  '<em>器の縁</em>   縁から ' + P.wallLayer + ' px ほどで傾きの流れが弱まる（縁ぎりぎりで ' + P.wallFloor + ' 倍）。',
+  '           壁に触れたしずくは、流す力が ' + P.pinS + ' × 触れている長さ ÷ 面積 より弱いと貼りつく',
   '<em>ねじれ</em>   輪郭が自分と交わったら、間の点の並びを逆にしてほどく',
   '<em>小さな粒</em> ' + P.minArea + ' px² より小さいと消す（消えた量は記録）'
 ].join('\n');
