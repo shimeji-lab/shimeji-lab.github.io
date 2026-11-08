@@ -1,12 +1,15 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OIL FILM"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>OIL FILM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <!--
-  OIL FILM 油膜シミュレータ  v0.9「CONNECT · CUT · STRETCH」
+  OIL FILM 油膜シミュレータ  v0.10「CONNECT · CUT · STRETCH」
   準拠：OIL FILM 詳細設計書 v0.2（操作仕様）。計算は v0.3 で輪郭モデルに変更
   モデル：油のしずくの輪郭（点の輪）だけを追う。界面張力（線張力）・面積の保存・油の粘り・汁の抵抗・
           しずく同士の汁の膜（押し返しと、接触が続くと合体）・くびれでの分裂・箸（円い固体と付着）
 
   更新履歴
+  v0.10 2026-11-08 スマホを傾けたり揺らしたりすると、汁ごと油が流れるように（スマホのときだけ。エンジン v0.10）。
+                   加速度センサーの重力込みの値から、傾きの成分と、どんぶりの動きと逆向きの慣性を、しずく全体にかかる力として加える。
+                   持ったままの傾きには 2.5 秒かけて慣れる（ずっと流れ続けない）。設定に「傾けて揺らす」。自動検証 B18・B19 を追加
   v0.9 2026-11-07  押しつぶされたしずくが不自然な形のまま固まる不具合を修正（エンジン v0.9）：
                    小さな粒は動きは丸ごとのまま、形は丸に戻す（すき間に押し込まれた三角形のまま残らない）。
                    止めるのは丸いしずくだけ（つぶれた形では止めない）。描画では、止まりかけた輪郭の細かな揺れだけをならす
@@ -234,6 +237,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     <div class="lbl">箸の先を表示<small>触れているあいだ、計算に入れている箸の先の大きさを薄い円で出します。</small></div>
     <label class="switch"><input type="checkbox" id="optRing" aria-label="箸の先を表示"><span></span></label>
   </div>
+  <div class="row" id="rowTilt" hidden>
+    <div class="lbl">傾けて揺らす<small>スマホをどんぶりに見立てます。傾けたり揺らしたりすると、汁ごと油が流れます。持ったままの傾きには少しずつ慣れて、止まります。</small></div>
+    <label class="switch"><input type="checkbox" id="optTilt" aria-label="傾けて揺らす"><span></span></label>
+  </div>
   <div class="btn-row">
     <button class="chip" id="btnScatter">並べ直す</button>
     <button class="chip" id="btnRestart">最初の形に戻す</button>
@@ -250,6 +257,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       <div class="lbl">輪郭の点を表示<small>計算している点（しずくの輪郭の点）を小さな丸で出します。</small></div>
       <label class="switch"><input type="checkbox" id="optRaw" aria-label="輪郭の点を表示"><span></span></label>
     </div>
+    <div class="row" id="rowTiltFlip" hidden>
+      <div class="lbl">傾きの向きを反対に<small>傾けた側と逆へ油が流れる端末のときだけ入れてください。</small></div>
+      <label class="switch"><input type="checkbox" id="optTiltFlip" aria-label="傾きの向きを反対に"><span></span></label>
+    </div>
     <details class="hist" id="testBox">
       <summary>エンジンの検証（開くとこのブラウザで実行。数秒かかります）</summary>
       <div class="vlist" id="vlist"></div>
@@ -260,6 +271,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <details class="hist">
       <summary>更新履歴</summary>
+      <p class="ver">v0.10（2026-11-08）スマホを傾けたり揺らしたりすると、汁ごと油が流れるように（スマホのときだけ。設定の「傾けて揺らす」で切れます）</p>
       <p class="ver">v0.9（2026-11-07）押しつぶされたしずくが三角や角ばった形のまま固まる不具合を修正。小さな粒は丸に戻り、止めるのは丸いしずくだけ。止まりかけの輪郭の細かな揺れは描画でならす</p>
       <p class="ver">v0.8（2026-11-07）箸の当たり判定を小さく。押しつけただけでは合体しない。密集した粒が震えないように（小さな粒は変形させず、落ち着いたしずくは止める）</p>
       <p class="ver">v0.7（2026-11-07）寄り添ったしずくがもっと近づき、接したところが少し平らに。光沢の映り込みと波紋をやめ、線を細く</p>
@@ -272,16 +284,19 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
   </section>
-  <p class="ver" id="ver"><b>OIL FILM v0.9</b> CONNECT · CUT · STRETCH<br>
+  <p class="ver" id="ver"><b>OIL FILM v0.10</b> CONNECT · CUT · STRETCH<br>
   油のしずくの輪郭だけを、点の輪として計算しています。点を引き寄せる界面張力がしずくを丸くし、輪郭が囲む面積を毎回そろえて油の量を保ちます。しずくの間にはさまった汁の膜が押し返すので、ぶつけると軽く弾き、重なりかけても押し離します。箸が関わらないかぎり、しずく同士は合体しません。近くのしずく同士や画面の縁とは、ゆるく引き合って寄り添います（液面に浮いたもの同士が寄り合う、チェリオス効果と呼ばれる現象の近似）。寄り添ったしずくは弱く押し合い、接したところが少し平らになります。輪郭どうしが油をはさんで近づくと、そこで2つに分かれます。<br>
   指は、汁に立てた箸の先です。先には油の膜が付いています。ゆっくり触れたしずくは箸の膜とつながって一緒に動き、2つ以上つながると箸を通して1つになります。速く動かした箸は膜とつながらず、外から横切るとしずくを切ります。<br>
-  この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
+  この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。スマホでは、傾けたり揺らしたりしたときの力（傾きの重力と、どんぶりの動きに取り残される慣性）を、すべての油に同じ強さでかけています。持ったままの傾きには2.5秒ほどで慣れるので、流れ続けることはありません。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
 </section>
 
 <script>
 /* =====================================================================
- * OIL FILM contour engine  v0.9
+ * OIL FILM contour engine  v0.10
  *   描画非依存。Node でも単体実行できる（検証用）。単位は画面の px と秒。
+ *
+ *   v0.10 2026-11-08 どんぶりの傾き・揺れ：world.body（px/s²）をすべての点に同じ加速度として加える。
+ *                    bodyWake より強いと、眠ったしずくも起き、眠らない。
  *
  *   v0.9 2026-11-07  押しつぶされた形のまま固まる不具合を修正：半径 11 px 未満のしずくも形は 0.08 秒で丸へ戻す
  *                    （丸ごと動かすだけだと、すき間に押し込まれた三角形のまま残った。相手と接している点は外へ押し出さない）。眠らせるのは丸いしずくだけ
@@ -317,7 +332,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 (function (root) {
   'use strict';
 
-  var ENGINE_VERSION = '0.9';
+  var ENGINE_VERSION = '0.10';
 
   function mulberry32(seed) {
     var a = seed >>> 0;
@@ -366,7 +381,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     press: 1,        // 触れたあとも残す引き合いの割合（0〜1）。押し合って、接したところが少し平らになる
     gAtt: 40,        // しずく同士・しずくと縁が引き合う強さ（px/s²）。浮いたもの同士が寄るチェリオス効果の近似
     lAtt: 14,        // その届く距離（px。毛管長に当たる）
-    minArea: 70      // これより小さい粒は消える（px²。消えた量は記録する）
+    minArea: 70,     // これより小さい粒は消える（px²。消えた量は記録する）
+    bodyWake: 40     // どんぶりの傾き・揺れの力がこれより強いと、眠ったしずくも動き出す（px/s²）
   };
 
   var nextId = 1;
@@ -408,6 +424,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     for (k in DEFAULTS) this.p[k] = DEFAULTS[k];
     if (params) for (k in params) this.p[k] = params[k];
     this.drops = [];
+    this.body = { x: 0, y: 0 };  // どんぶりの傾き・揺れで、汁ごと油にかかる力（加速度 px/s²。画面の向き）
     this.tip = { on: false, x: 0, y: 0, vx: 0, vy: 0, r: this.p.tipR, holder: 0, wet: false };
     this.att = {};               // 箸の油の膜とつながっているしずく（id → 1）
     this.tipTime = {};           // 箸に触れている時間（id → s）
@@ -544,12 +561,20 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     // 2b) 引き合い：しずく同士と、しずくと画面の縁（メニスカスによる引力。距離 lAtt で弱まる）
     if (P.gAtt > 0) this.attract();
 
+    // 2c) どんぶりの傾き・揺れ：汁ごと動かされる油に、すべての点で同じ加速度がかかる（形は変えず、しずく全体を流す）
+    var bx = this.body.x || 0, by = this.body.y || 0, bodyOn = bx * bx + by * by > P.bodyWake * P.bodyWake;
+    if (bx || by) for (k = 0; k < drops.length; k++) {
+      d = drops[k]; n = d.x.length;
+      for (i = 0; i < n; i++) { d.ax[i] += bx; d.ay[i] += by; }
+    }
+
     // 3) 速度の更新：力、汁の抵抗、油の粘り、箸への付着
     var damp = Math.exp(-P.c * dt), relax = 1 - Math.exp(-P.beta * dt), adh = 1 - Math.exp(-P.adhere * dt);
     for (k = 0; k < drops.length; k++) {
       d = drops[k]; n = d.x.length;
       // 眠っているしずく（止まって落ち着いたもの）は動かさない。箸が近づくか、動いているしずくに押されると起きる
       if (d.sleep) {
+        if (bodyOn) d.sleep = false;
         if (t.on) { var sc0 = dropCenter(d), rr0 = Math.sqrt(d.A0 / Math.PI) * 1.4 + t.r + 24; if ((sc0[0] - t.x) * (sc0[0] - t.x) + (sc0[1] - t.y) * (sc0[1] - t.y) < rr0 * rr0) d.sleep = false; }
         if (d.sleep) { for (i = 0; i < n; i++) { d.vx[i] = 0; d.vy[i] = 0; } continue; }
       }
@@ -645,7 +670,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
         }
       }
       // 眠り：丸くて止まったしずくだけ（つぶれた形のまま固めない）
-      if (!nearTip && d.calm <= 0 && Math.sqrt(emax) < P.vSleep && roundness(d) < P.sleepRound) d.still = (d.still || 0) + dt; else d.still = 0;
+      if (!nearTip && !bodyOn && d.calm <= 0 && Math.sqrt(emax) < P.vSleep && roundness(d) < P.sleepRound) d.still = (d.still || 0) + dt; else d.still = 0;
       if (d.still > P.tSleep) { d.sleep = true; d.still = 0; for (i = 0; i < n; i++) { d.vx[i] = 0; d.vy[i] = 0; } ev.fill(0); }
     }
 
@@ -1174,7 +1199,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
 </script>
 <script>
-/* OIL FILM 検証 v0.9（v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
+/* OIL FILM 検証 v0.10（v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
 (function (root) {
   'use strict';
   var C = root.OilContour || (typeof require !== 'undefined' ? require('./contour.js') : null);
@@ -1293,6 +1318,21 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       var d = s.world.drops[0], mn = Math.min.apply(null, d.x);
       return { ok: mn < 4, detail: '4秒後の縁とのすき間 ' + mn.toFixed(1) + ' px（縁に寄る）' };
     } },
+    { id: 'B18', name: 'どんぶりを傾ける（下向きに 250 px/s²・3秒）', fn: function () {
+      var s = new C.Sim(W, H); C.scatter(s.world, 5); run(s, 2);
+      var n0 = s.world.drops.length, cy = function (d) { return d.y.reduce(function (a, b) { return a + b; }, 0) / d.y.length; };
+      var y0 = s.world.drops.map(cy), A0 = s.world.totalA0();
+      s.world.body = { x: 0, y: 250 }; run(s, 3); s.world.body = { x: 0, y: 0 }; run(s, 1);
+      var down = 0; s.world.drops.forEach(function (d, k) { if (cy(d) > y0[k] + 5 || Math.max.apply(null, d.y) > H - 4) down++; });
+      return { ok: s.world.drops.length === n0 && down === n0 && Math.abs(s.world.totalA0() + s.world.lostArea - A0) < 1e-6 && aerr(s) < 1e-3,
+        detail: 'しずくの数 ' + n0 + ' → ' + s.world.drops.length + '、下へ動いた・下の縁に着いた ' + down + '/' + n0 + '、面積の誤差 ' + aerr(s).toExponential(1) + '（流れて下に寄る。合体しない）' };
+    } },
+    { id: 'B19', name: '止まったしずくも、揺らすと動き出す', fn: function () {
+      var s = mk([[195, 400, 40]]); run(s, 3); var slept = !!s.world.drops[0].sleep;
+      var x0 = s.world.drops[0].x[0]; s.world.body = { x: 300, y: 0 }; run(s, 0.3); s.world.body = { x: 0, y: 0 };
+      var dx = s.world.drops[0].x[0] - x0;
+      return { ok: slept && dx > 3, detail: '止まっていた ' + (slept ? 'はい' : 'いいえ') + '、0.3秒の揺れで右へ ' + dx.toFixed(1) + ' px' };
+    } },
     { id: 'B10', name: '同じ初期状態・同じ軌跡の再生', fn: function () {
       var a = mk(PAIR), b = mk(PAIR), d = 0;
       trace(a, [[160, 400], [262, 400], [262, 300]], 90, 0.2); trace(b, [[160, 400], [262, 400], [262, 300]], 90, 0.2);
@@ -1323,7 +1363,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 const $ = (s) => document.querySelector(s);
 const C = window.OilContour;
 
-const opt = { scene: 'mix', ring: true, color: 'amber' };
+const opt = { scene: 'mix', ring: true, color: 'amber', tilt: true, tiltFlip: false };
 try { Object.assign(opt, JSON.parse(localStorage.getItem('oilfilm.opt') || '{}')); } catch (e) {}
 function saveOpt() { try { localStorage.setItem('oilfilm.opt', JSON.stringify(opt)); } catch (e) {} }
 
@@ -1459,6 +1499,7 @@ function release(e) {
   if (e.pointerId !== pid) return;
   pid = null;
   const g = sim.up(); upAt = performance.now();
+  askTiltPermission();                      // iPhone は、指を離したときにだけセンサーの許可を求められる
   if (g) { lastGesture = g; gestures++; if (gestures === 3) setTimeout(() => $('#hint').classList.add('fade'), 1500); }
 }
 cv.addEventListener('pointerup', release);
@@ -1479,7 +1520,7 @@ window.addEventListener('keydown', (e) => {
 });
 const guide = $('#guide');
 function showGuide() {
-  guide.innerHTML = '指は、汁に立てた箸の先です。<br>先には油の膜が付いていて、<br>そっと触れたしずくどうしをつなぎます。<span class="sub">画面に触れると閉じます</span>';
+  guide.innerHTML = '指は、汁に立てた箸の先です。<br>先には油の膜が付いていて、<br>そっと触れたしずくどうしをつなぎます。' + (isPhone && opt.tilt ? '<br>スマホを傾けたり揺らしたりすると、<br>汁ごと油が流れます。' : '') + '<span class="sub">画面に触れると閉じます</span>';
   guide.hidden = false; guide.classList.remove('fade');
   $('#hint').classList.remove('fade'); gestures = 0;
 }
@@ -1540,6 +1581,8 @@ $('#sweepMap').innerHTML = [
   '<em>重なり</em>   相手の内側に入った点を外へ押し出す（合体はしない）',
   '<em>引き合い</em> しずく同士・縁と ' + P.gAtt + ' px/s² × exp(−すき間/' + P.lAtt + ' px) で寄る。',
   '           触れたあとも弱く押し合い、接したところが少し平らになる',
+  '<em>傾き</em>     スマホのみ。−（重力込みの加速度）の画面に沿った成分から、' + 2.5 + ' 秒で追う基準を引き、',
+  '           1 m/s² あたり 60 px/s²（上限 900）をすべての点に加える。' + P.bodyWake + ' px/s² を超えると眠ったしずくも起きる',
   '<em>ねじれ</em>   輪郭が自分と交わったら、間の点の並びを逆にしてほどく',
   '<em>小さな粒</em> ' + P.minArea + ' px² より小さいと消す（消えた量は記録）'
 ].join('\n');
@@ -1557,12 +1600,69 @@ function updDbg(ms) {
     ['はじめとの差', (A0 + w.lostArea - A00).toFixed(3) + ' px²'],
     ['刻み', sim.lastSub],
     ['計算', ms.toFixed(2) + ' ms/コマ'],
+    ['傾き', isPhone ? (tilt.on ? (tilt.raw ? Math.hypot(w.body.x, w.body.y).toFixed(0) + ' px/s²' : 'センサー待ち') : '切') : 'スマホのみ'],
     ['箸', w.tip.on ? (w.tip.holder ? 'しずくの中' : 'しずくの外') + '・つながり ' + Object.keys(w.att).length : '—'],
     ['最後の操作', g ? KIND[g.kind] || g.kind : '—'],
     ['経路', g ? g.seq : '—'],
     ['速さの最大', g ? g.vmax.toFixed(0) + ' px/秒' : '—'],
   ];
   $('#dbg').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+}
+
+// ---------------- どんぶりを傾ける・揺らす（スマホの加速度センサー。スマホのときだけ） ----------------
+// センサーの「重力込みの加速度」g を使う。油（と汁）にかかる力は −g の画面に沿った成分：
+//   静かに傾けると重力の傾き成分（低い側へ流れる）、揺らすとどんぶりの動きと逆向きの慣性（汁が取り残される）。
+// 手に持った姿勢の傾きでずっと流れ続けないよう、基準の姿勢を TILT.tau 秒かけてゆっくり追いかけ、その差だけを使う。
+const isPhone = window.matchMedia('(pointer: coarse)').matches && 'DeviceMotionEvent' in window;
+const needPerm = isPhone && typeof DeviceMotionEvent.requestPermission === 'function';   // iPhone・iPad
+const TILT = { gain: 60, tau: 2.5, smooth: 0.04, dead: 0.25, max: 900 };   // gain：1 m/s² あたりの px/s²
+const tilt = { on: false, granted: !needPerm, raw: null, f: [0, 0], base: null, ang: null };
+function onMotion(e) { const g = e.accelerationIncludingGravity; if (g && g.x != null && g.y != null) tilt.raw = [g.x, g.y]; }
+function startTilt() {
+  if (tilt.on || !tilt.granted) return;
+  window.addEventListener('devicemotion', onMotion); tilt.on = true; tilt.base = null; tilt.raw = null;
+}
+function stopTilt() { window.removeEventListener('devicemotion', onMotion); tilt.on = false; if (sim) sim.world.body = { x: 0, y: 0 }; }
+function askTiltPermission() {
+  if (!needPerm || tilt.granted || !opt.tilt || tilt.asking) return;
+  tilt.asking = true;
+  DeviceMotionEvent.requestPermission().then((r) => {
+    tilt.asking = false;
+    if (r === 'granted') { tilt.granted = true; startTilt(); }
+    else { opt.tilt = false; optTilt.checked = false; saveOpt(); story('傾きのセンサーが許可されませんでした'); }
+  }).catch(() => { tilt.asking = false; });
+}
+function updTilt(dt) {
+  const w = sim.world;
+  if (!tilt.on || !tilt.raw || paused) { w.body = { x: 0, y: 0 }; return; }
+  let ang = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
+  if (ang !== tilt.ang) { tilt.ang = ang; tilt.base = null; }      // 画面が回ったら基準を取り直す
+  const th = ang * Math.PI / 180, c = Math.cos(th), s = Math.sin(th), sg = opt.tiltFlip ? -1 : 1;
+  const gx = sg * tilt.raw[0], gy = sg * tilt.raw[1];
+  // 端末の向き（x 右・y 上）→ 画面の向き（x 右・y 下）。油にかかる力は −g
+  const fx = -(gx * c + gy * s), fy = -(gx * s - gy * c);
+  const ks = 1 - Math.exp(-dt / TILT.smooth);
+  tilt.f[0] += (fx - tilt.f[0]) * ks; tilt.f[1] += (fy - tilt.f[1]) * ks;
+  if (!tilt.base) tilt.base = tilt.f.slice();
+  const kb = 1 - Math.exp(-dt / TILT.tau);
+  tilt.base[0] += (tilt.f[0] - tilt.base[0]) * kb; tilt.base[1] += (tilt.f[1] - tilt.base[1]) * kb;
+  let rx = tilt.f[0] - tilt.base[0], ry = tilt.f[1] - tilt.base[1];
+  const m = Math.hypot(rx, ry), sc = m > TILT.dead ? (m - TILT.dead) / m : 0;   // 手の小さな震えは無視
+  let ax = TILT.gain * rx * sc, ay = TILT.gain * ry * sc;
+  const am = Math.hypot(ax, ay); if (am > TILT.max) { ax *= TILT.max / am; ay *= TILT.max / am; }
+  w.body = { x: ax, y: ay };
+}
+const optTilt = $('#optTilt');
+if (isPhone) {
+  $('#rowTilt').hidden = false; $('#rowTiltFlip').hidden = false;
+  optTilt.checked = opt.tilt; $('#optTiltFlip').checked = opt.tiltFlip;
+  optTilt.addEventListener('change', () => {
+    opt.tilt = optTilt.checked; saveOpt();
+    if (!opt.tilt) { stopTilt(); return; }
+    if (tilt.granted) startTilt(); else askTiltPermission();    // スイッチを押したこと自体が許可を求めるきっかけになる
+  });
+  $('#optTiltFlip').addEventListener('change', (e) => { opt.tiltFlip = e.target.checked; saveOpt(); tilt.base = null; });
+  if (opt.tilt) startTilt();
 }
 
 // ---------------- 状態の保存と、戻るボタン ----------------
@@ -1605,6 +1705,7 @@ let last = performance.now(), frameNo = 0, msAvg = 0;
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+  if (dt > 0) updTilt(dt);
   if (!paused && dt > 0) {
     const t0 = performance.now();
     sim.frame(dt);
@@ -1624,7 +1725,7 @@ let seen = false; try { seen = localStorage.getItem('oilfilm.seen') === '1'; loc
 showGuide();
 if (seen) setTimeout(hideGuide, 2600);
 setTimeout(() => $('#hint').classList.add('fade'), 26000);
-window.__oil = { get sim() { return sim; } };
+window.__oil = { get sim() { return sim; }, tilt, updTilt };   // 検証用
 requestAnimationFrame((t) => { last = t; requestAnimationFrame(loop); });
 })();
 
