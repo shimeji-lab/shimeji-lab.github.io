@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-title" content="NENKIN">
+<meta name="description" content="黄色い粘菌（モジホコリ）が、エサどうしを道でつないでいく様子をながめるシミュレーター。">
+<title>NENKIN</title>
+<!--
+  NENKIN 粘菌シミュレーター  v0.1.0「YELLOW NETWORK」
+  研究準拠シミュレータシリーズ　作：しめじ太郎
+
+  ■ 計算のもと（出典）
+  [1] Jones, J. (2010) "Characteristics of pattern formation and evolution in approximations of
+      Physarum transport networks." Artificial Life 16(2): 127-153.
+      → 粘菌の体を「粒（エージェント）」の集まりとして表す。各粒は1マスずつ進み、通ったマスに
+        跡（誘引物質）を残す。前・左前・右前の3点で跡の濃さを感じ、濃い方へ曲がる。
+        跡は 3×3 の平均で広がり（拡散）、毎歩 decayT の割合で薄れる（減衰）。
+        1マスに粒は1つだけ。進む先がふさがっていたら、その場で向きをランダムに変える。
+        使った値：SA=22.5°（感覚器の角度） RA=45°（回転角） SO=9マス（感覚器の距離）
+                  SS=1マス（一歩） depT=5（跡の量） decayT=0.1（減衰率） 拡散=3×3平均
+        エサは、そのまわり（半径3マス）に毎歩 12 の誘引物質を足す（論文 §6 の「刺激の投影」）。
+  [2] Jones, J. (2011) "Influences on the formation and evolution of Physarum polycephalum inspired
+      emergent transport networks." Natural Computing 10(4): 1345-1369.
+      → 増える・減る規則。5歩ごとに、9×9 の窓の中の粒が 10 個以下ならとなりに1つ増える。
+        5×5 の窓に 24 個より多ければ混みすぎで消える。粒の上限はマス数の 12%。
+  [3] Tero, A. ほか (2010) "Rules for biologically inspired adaptive network design."
+      Science 327: 439-442.
+      → 「流れの多い管は太くなり、流れの少ない管は細って消える」。v0.1 ではこれを粒の言葉に
+        置き換えた独自の簡略化を使う：エサのそば（半径5マス）に着くと粒は満腹に戻る。
+        300 歩エサに着かない粒は、1歩ごとに 1% の確率で消える。最近 200 歩以内にエサに
+        着いた粒だけが増える。→ エサとエサを結ぶ道（粒がよく行き来する道）だけが残る。
+        Tero の式そのもの（Kirchhoff の法則と dD/dt = f(|Q|) − D）は v0.3 で見比べ用に入れる。
+      → 光：論文では、光を当てた場所を粘菌が避けることを利用して山や海を表した。ここでも光の
+        当たるマスは「入れない・感じると強く避ける（-40）」とし、中にいた粒は1歩ごとに 5% で消える。
+  ※ 画面の大きさに合わせて、1マスを 2.5〜4 画面ピクセル程度にとる。時間の単位は「歩」で、
+    実際の時間（粘菌は数時間〜1日かけて網を作る）とは対応させていない。
+
+  ■ 作り
+  id="core" のスクリプト … 計算（画面に依存しない）。test.html はこの部分だけを取り出して試験する
+  id="app" のスクリプト  … 画面・操作・描画
+
+  ■ 更新履歴
+  v0.1.0 2026-11-08  最初の版。暗いシャーレの上でエサを置くと、粘菌が広がって道でつなぐ。
+                     操作は「眺める／エサを置く／光を当てる」。版数を5回タップで裏モード。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Unbounded:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
+<style>
+/* 全画面の暗いシャーレに、上端の細い情報帯と下端のモード切替だけを浮かべる。シリーズ共通の構成で、意図的にダーク固定。 */
+:root {
+  --night: #06070a;
+  --glass: rgba(16, 15, 10, 0.62);
+  --glass-strong: rgba(12, 11, 8, 0.92);
+  --line: rgba(242, 205, 92, 0.16);
+  --ink: #f1eee4;
+  --mute: #a19b88;
+  --lumen: #f2c94c;
+  --lumen-ink: #1f1703;
+  --light: #bfe3ff;
+  --f-mark: "Unbounded", "Zen Kaku Gothic New", system-ui, sans-serif;
+  --f-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 14px;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--night); color: var(--ink); font-family: var(--f-ui); font-size: 14px;
+  overflow: hidden; overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--lumen); outline-offset: 2px; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 55%, rgba(0, 0, 0, 0.5) 100%); }
+
+/* 上端 */
+.top {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mark { font-family: var(--f-mark); font-weight: 600; font-size: 15px; letter-spacing: 0.32em; color: var(--ink); opacity: 0.92; white-space: nowrap; }
+.count { display: flex; align-items: baseline; gap: 4px; font-family: var(--f-num); font-variant-numeric: tabular-nums; color: var(--lumen); font-size: 15px; white-space: nowrap; }
+.count small { font-family: var(--f-ui); font-size: 11px; color: var(--mute); }
+.top .spacer { flex: 1; min-width: 0; }
+.icon-btn {
+  pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; border: 1px solid var(--line);
+  background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); cursor: pointer;
+}
+.icon-btn svg { width: 20px; height: 20px; }
+
+/* 一言・一時停止 */
+.story, .paused-chip {
+  position: fixed; z-index: 5; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + 70px); pointer-events: none; white-space: nowrap;
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--glass); font-size: 12px; letter-spacing: 0.08em;
+  transition: opacity 1.2s;
+}
+.story { color: var(--lumen); }
+.story.fade { opacity: 0; }
+.paused-chip { color: var(--ink); top: calc(env(safe-area-inset-top, 0px) + 110px); }
+
+/* 下端 */
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.mode-hint {
+  max-width: 100%; padding: 6px 14px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line); color: var(--ink);
+  font-size: 12px; line-height: 1.6; text-align: center; transition: opacity .6s;
+}
+.mode-hint.fade { opacity: 0; }
+.modes {
+  pointer-events: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  width: min(100%, 380px); padding: 4px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.modes button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--mute); font-size: 13px; font-weight: 500; cursor: pointer; letter-spacing: 0.02em; white-space: nowrap;
+  transition: background .2s, color .2s;
+}
+.modes button svg { width: 18px; height: 18px; flex: none; }
+.modes button[aria-pressed="true"] { background: var(--lumen); color: var(--lumen-ink); }
+
+.ripple { position: fixed; z-index: 3; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; border: 1.5px solid rgba(241, 238, 228, 0.5); pointer-events: none; animation: ripple .9s ease-out forwards; }
+.ripple.food { border-color: rgba(242, 201, 76, 0.75); }
+@keyframes ripple { from { transform: scale(1); opacity: 1; } to { transform: scale(5); opacity: 0; } }
+
+/* 初回ガイド */
+.guide {
+  position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 4;
+  width: min(calc(100% - 48px), 330px); padding: 18px 20px; border-radius: var(--r);
+  background: var(--glass); border: 1px solid var(--line); text-align: center;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  pointer-events: none; line-height: 1.9; font-size: 14px; transition: opacity .5s;
+}
+.guide .sub { display: block; margin-top: 6px; font-size: 11px; color: var(--mute); }
+.guide.fade { opacity: 0; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 8;
+  top: calc(env(safe-area-inset-top, 0px) + 150px); max-width: calc(100% - 32px);
+  padding: 8px 14px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--line);
+  font-size: 12px; pointer-events: none;
+}
+
+/* 設定シート */
+.backdrop { position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.45); }
+.sheet {
+  position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 10;
+  width: min(100%, 440px); max-height: 84%; overflow-y: auto;
+  padding: 18px max(18px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 18px) max(18px, env(safe-area-inset-left, 0px));
+  border-radius: 20px 20px 0 0; background: var(--glass-strong);
+  border: 1px solid var(--line); border-bottom: 0;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  -webkit-user-select: text; user-select: text;
+}
+.sheet h2 { margin: 0 0 4px; font-family: var(--f-mark); font-weight: 400; font-size: 13px; letter-spacing: 0.24em; color: var(--mute); }
+.sheet .sub-h { margin: 18px 0 0; }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.row .lbl { flex: 1; min-width: 0; }
+.row .lbl small { display: block; color: var(--mute); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+.switch { position: relative; width: 48px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(242, 205, 92, 0.16); transition: background .2s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); transition: transform .2s; }
+.switch input:checked + span { background: var(--lumen); }
+.switch input:checked + span::after { transform: translateX(20px); background: var(--lumen-ink); }
+.switch input:focus-visible + span { outline: 2px solid var(--lumen); outline-offset: 2px; }
+.seg { display: flex; gap: 4px; padding: 3px; border-radius: 10px; border: 1px solid var(--line); flex: none; }
+.seg button { border: 0; background: transparent; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--mute); cursor: pointer; min-height: 32px; }
+.seg button[aria-pressed="true"] { background: var(--lumen); color: var(--lumen-ink); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 14px 0 4px; }
+.chip { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: rgba(242, 205, 92, 0.05); cursor: pointer; font-size: 13px; }
+.ver { margin-top: 14px; font-size: 11px; color: var(--mute); line-height: 1.7; }
+.ver b { font-family: var(--f-num); font-weight: 500; color: var(--ink); }
+#ver { -webkit-user-select: none; user-select: none; cursor: default; }
+.hist { padding: 12px 0 0; }
+.hist summary { cursor: pointer; font-size: 13px; color: var(--mute); }
+.seed-row { display: flex; gap: 6px; padding: 10px 0; }
+.seed-row input { flex: 1; min-width: 0; background: rgba(0,0,0,0.25); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 8px; font-family: var(--f-num); }
+
+/* 開発者表示 */
+.debug {
+  position: fixed; z-index: 6; left: max(10px, env(safe-area-inset-left, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 62px);
+  width: min(calc(100% - 20px), 230px); padding: 10px 12px; border-radius: 12px;
+  background: var(--glass-strong); border: 1px solid var(--line);
+  font-family: var(--f-num); font-size: 11px; line-height: 1.55; pointer-events: none;
+}
+.debug dl { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; margin: 0; }
+.debug dt { color: var(--mute); font-family: var(--f-ui); }
+.debug dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .bottom { right: auto; width: min(44vw, 340px); align-items: flex-start; padding-right: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+  .modes { position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); width: auto; grid-template-columns: 1fr; border-radius: 26px; }
+  .modes button { flex-direction: column; gap: 2px; min-height: 50px; min-width: 76px; padding: 5px 8px; font-size: 11px; border-radius: 22px; }
+  .mode-hint { text-align: left; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide, .mode-hint, .story, .modes button, .switch span, .switch span::after { transition: none; }
+  .ripple { animation-duration: .01s; }
+}
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="暗いシャーレの上で、黄色い粘菌がエサどうしを道でつないでいく様子"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="top">
+  <span class="mark">NENKIN</span>
+  <span class="count" aria-live="polite"><span id="count">0/0</span><small id="countLbl">つながったエサ</small></span>
+  <span class="spacer"></span>
+  <button class="icon-btn" id="btnPause" aria-label="一時停止" aria-pressed="false" title="一時停止（Space）">
+    <svg id="pauseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6v12M15 6v12"/></svg>
+  </button>
+  <button class="icon-btn" id="btnSettings" aria-label="設定">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
+  </button>
+</header>
+
+<div class="story fade" id="story" aria-live="polite"></div>
+<div class="paused-chip" id="pausedChip" hidden>一時停止中</div>
+<div class="guide" id="guide" hidden>
+  黄色い粘菌が、エサをさがして広がります。<br>エサを置くと、道でつないでいきます。
+  <span class="sub">画面に触れると閉じます</span>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<aside class="debug" id="debug" hidden>
+  <dl>
+    <dt>粒の数</dt><dd id="dN">-</dd>
+    <dt>上限</dt><dd id="dCap">-</dd>
+    <dt>歩数</dt><dd id="dStep">-</dd>
+    <dt>歩/フレーム</dt><dd id="dSpf">-</dd>
+    <dt>計算 ms/歩</dt><dd id="dMs">-</dd>
+    <dt>マス目</dt><dd id="dGrid">-</dd>
+    <dt>つながり</dt><dd id="dConn">-</dd>
+    <dt>道の面積</dt><dd id="dArea">-</dd>
+    <dt>生まれた／消えた</dt><dd id="dBD">-</dd>
+    <dt>シード</dt><dd id="dSeed">-</dd>
+    <dt>FPS</dt><dd id="dFps">-</dd>
+  </dl>
+</aside>
+
+<div class="bottom">
+  <div class="mode-hint fade" id="hint"></div>
+  <nav class="modes" aria-label="操作モード">
+    <button id="modeView" data-m="view" aria-pressed="true" title="眺める（1）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>
+      眺める
+    </button>
+    <button id="modeFood" data-m="food" aria-pressed="false" title="エサを置く（2）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 13.5c-.8-3.6 2.4-7.4 6.6-7.9 4.1-.5 7.8 1.9 7.9 5.4.1 3.8-3.2 6.9-7.4 7.4-3.6.4-6.4-1.5-7.1-4.9z"/><path d="M9 11.5c1.5-1.4 3.6-2 5.6-1.6" stroke-linecap="round"/></svg>
+      エサを置く
+    </button>
+    <button id="modeLight" data-m="light" aria-pressed="false" title="光を当てる（3）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>
+      光を当てる
+    </button>
+  </nav>
+</div>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<section class="sheet" id="sheet" hidden aria-label="設定">
+  <h2>SETTINGS</h2>
+  <div class="row">
+    <div class="lbl">速さ<small>はやいほど、たくさんの歩数を1コマで計算します。</small></div>
+    <div class="seg" id="optSpeed"><button data-v="1" aria-pressed="false">ゆっくり</button><button data-v="2" aria-pressed="true">ふつう</button><button data-v="4" aria-pressed="false">はやい</button></div>
+  </div>
+  <div class="row">
+    <div class="lbl">エサを光らせる<small>エサのまわりをほんのり明るくして見つけやすくします。</small></div>
+    <label class="switch"><input type="checkbox" id="optFoodGlow" checked aria-label="エサを光らせる"><span></span></label>
+  </div>
+  <div class="btn-row">
+    <button class="chip" id="btnNew">新しいシャーレ</button>
+    <button class="chip" id="btnClearFood">エサを片づける</button>
+    <button class="chip" id="btnClearLight">光を消す</button>
+    <button class="chip" id="btnGuide">ガイドを再表示</button>
+    <button class="chip" id="btnClose" style="grid-column: 1 / -1">閉じる</button>
+  </div>
+  <section id="devSec" hidden aria-label="裏モード">
+    <h2 class="sub-h">DEVELOPER</h2>
+    <div class="row">
+      <div class="lbl">開発者表示<small>粒の数・歩数・計算時間・エサのつながりを左上に出します。</small></div>
+      <label class="switch"><input type="checkbox" id="optDebug" aria-label="開発者表示"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="lbl">跡だけを見る<small>粘菌の色づけをやめ、跡（誘引物質）の濃さをそのまま白黒で出します。</small></div>
+      <label class="switch"><input type="checkbox" id="optRaw" aria-label="跡だけを見る"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="lbl">つながりの判定を見る<small>道とみなしたマス（跡が3以上）を青で重ねます。</small></div>
+      <label class="switch"><input type="checkbox" id="optConn" aria-label="つながりの判定を見る"><span></span></label>
+    </div>
+    <div class="seed-row"><input id="seedInput" inputmode="numeric" placeholder="シード（1〜4294967295）" aria-label="乱数シード"><button class="chip" id="btnSeed">このシードで始める</button></div>
+    <details class="hist">
+      <summary>更新履歴</summary>
+      <p class="ver">
+      v0.1.0（2026-11-08）最初の版：暗いシャーレの上でエサを置くと、粘菌が広がって道でつなぐ。眺める・エサを置く・光を当てる
+      </p>
+    </details>
+    <div class="btn-row"><button class="chip" id="btnDevHide" style="grid-column: 1 / -1">裏モードを閉じる</button></div>
+  </section>
+  <p class="ver" id="ver"><b id="verText">NENKIN</b> YELLOW NETWORK<br>
+  粘菌の広がり方は Jones（2010）の粒のモデル、増え方・減り方は Jones（2011）、道が残る・消える考え方は Tero ほか（2010）をもとにしています。動きの速さや色は見やすく調整しています。</p>
+</section>
+
+<script id="core">
+(function () {
+'use strict';
+const VERSION = '0.1.0';
+const TAU = Math.PI * 2;
+
+// ---- 乱数（再現できるように種つき） ----
+function xorshift32(seed) {
+  let s = (seed >>> 0) || 1;
+  return function () { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+
+// ---- 既定パラメータ（Jones 2010 表1 の既定値を基準に、見やすさのため一部調整） ----
+const DEFAULTS = {
+  SA: 22.5 * Math.PI / 180,  // 感覚器の角度（Jones 既定 22.5°）
+  RA: 45 * Math.PI / 180,    // 回転角（Jones 既定 45°）
+  SO: 9,                     // 感覚器の距離 [マス]（Jones 既定 9）
+  SS: 1,                     // 一歩の長さ [マス]（Jones 既定 1）
+  depT: 5,                   // 跡の付着量（Jones 既定 5）
+  decayT: 0.1,               // 跡の減衰率（Jones 既定 0.1）
+  pRandom: 0,                // ランダムに向きを変える確率（Jones 既定 0）
+  foodRadius: 3,             // エサの半径 [マス]
+  foodDep: 12,               // エサが毎歩出す誘引物質の量（Jones 2010 §6 の刺激の投影）
+  lightPenalty: 40,          // 光の当たるマスを感じたときの値（負の誘引＝忌避）
+  lightKill: 0.05,           // 光の中にいる粒が1歩で消える確率
+  growEvery: 5,              // 増殖・縮小を判定する間隔 [歩]
+  growWin: 9, growMax: 10,   // 9×9 の窓に粒が10個以下なら隣に増える（Jones 2011 の増殖規則）
+  shrinkWin: 5, shrinkMax: 24, // 5×5 の窓に24個より多ければ消える（混みすぎの縮小）
+  coverage: 0.12,            // 粒の上限 ＝ マス数 × この割合
+  starve: 300,               // これだけ歩いてもエサに着かない粒は飢える [歩]
+  starveKill: 0.01,          // 飢えた粒が1歩で消える確率
+  fedGrow: 200,              // これより最近エサに着いた粒だけが増える [歩]
+};
+
+function createSim(w, h, opts) {
+  opts = opts || {};
+  const p = Object.assign({}, DEFAULTS, opts.params || {});
+  const n = w * h;
+  const cap = Math.max(16, Math.floor(n * p.coverage));
+  const sim = {
+    w, h, p, cap, seed: opts.seed || 1, rand: xorshift32(opts.seed || 1),
+    trail: new Float32Array(n), tmp: new Float32Array(n),
+    occ: new Int32Array(n),          // そのマスにいる粒の番号+1（0は空き）
+    light: new Uint8Array(n),        // 1＝光が当たっている
+    ax: new Float32Array(cap), ay: new Float32Array(cap), aa: new Float32Array(cap), ah: new Uint16Array(cap), count: 0,
+    foodMap: new Uint8Array(n),      // 1＝エサのそば（ここに来た粒は満腹に戻る）
+    sat: new Int32Array((w + 1) * (h + 1)), // 増殖判定用の積分画像
+    foods: [], steps: 0, born: 0, died: 0,
+  };
+  return sim;
+}
+
+function cellOf(sim, x, y) { return (y | 0) * sim.w + (x | 0); }
+
+function addAgent(sim, x, y, a, h) {
+  if (sim.count >= sim.cap) return -1;
+  const c = cellOf(sim, x, y);
+  if (sim.occ[c] || sim.light[c]) return -1;
+  const i = sim.count++;
+  sim.ax[i] = x; sim.ay[i] = y; sim.aa[i] = a; sim.ah[i] = h || 0;
+  sim.occ[c] = i + 1; sim.born++;
+  return i;
+}
+function removeAgent(sim, i) {
+  const last = --sim.count;
+  sim.occ[cellOf(sim, sim.ax[i], sim.ay[i])] = 0;
+  if (i !== last) {
+    sim.ax[i] = sim.ax[last]; sim.ay[i] = sim.ay[last]; sim.aa[i] = sim.aa[last]; sim.ah[i] = sim.ah[last];
+    sim.occ[cellOf(sim, sim.ax[i], sim.ay[i])] = i + 1;
+  }
+  sim.died++;
+}
+
+// 粘菌の小さな塊を置く（はじまりの一点）
+function inoculate(sim, cx, cy, r, num) {
+  let placed = 0;
+  for (let k = 0; k < num * 4 && placed < num; k++) {
+    const t = sim.rand() * Math.PI * 2, d = Math.sqrt(sim.rand()) * r;
+    const x = Math.fround(cx + Math.cos(t) * d), y = Math.fround(cy + Math.sin(t) * d);
+    if (x < 1 || y < 1 || x >= sim.w - 1 || y >= sim.h - 1) continue;
+    if (addAgent(sim, x, y, sim.rand() * Math.PI * 2) >= 0) placed++;
+  }
+  return placed;
+}
+
+function addFood(sim, x, y) { const f = { x, y, id: sim.foods.length ? sim.foods[sim.foods.length - 1].id + 1 : 1 }; sim.foods.push(f); rebuildFoodMap(sim); return f; }
+function rebuildFoodMap(sim) {
+  const { w, h, foodMap } = sim; foodMap.fill(0);
+  const R = sim.p.foodRadius + 2;
+  for (const f of sim.foods) for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    if (dx * dx + dy * dy > R * R) continue;
+    const x = (f.x | 0) + dx, y = (f.y | 0) + dy;
+    if (x >= 0 && y >= 0 && x < w && y < h) foodMap[y * w + x] = 1;
+  }
+}
+function removeFoodNear(sim, x, y, r) {
+  let best = -1, bd = r * r;
+  sim.foods.forEach((f, i) => { const d = (f.x - x) ** 2 + (f.y - y) ** 2; if (d <= bd) { bd = d; best = i; } });
+  if (best >= 0) { const f = sim.foods.splice(best, 1)[0]; rebuildFoodMap(sim); return f; }
+  return null;
+}
+function setLight(sim, cx, cy, r, on) {
+  const { w, h } = sim; let changed = 0;
+  const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(w - 1, Math.ceil(cx + r));
+  const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(h - 1, Math.ceil(cy + r));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r * r) { const c = y * w + x; if (sim.light[c] !== (on ? 1 : 0)) { sim.light[c] = on ? 1 : 0; changed++; } }
+  }
+  return changed;
+}
+function clearLight(sim) { sim.light.fill(0); }
+
+function sense(sim, x, y, a) {
+  const sx = x + Math.cos(a) * sim.p.SO, sy = y + Math.sin(a) * sim.p.SO;
+  if (sx < 0 || sy < 0 || sx >= sim.w || sy >= sim.h) return -sim.p.lightPenalty; // 壁の外は避ける
+  const c = (sy | 0) * sim.w + (sx | 0);
+  return sim.light[c] ? -sim.p.lightPenalty : sim.trail[c];
+}
+
+// 感覚の規則（Jones 2010 の表）：前・左前・右前の3点の跡の濃さを比べて向きを変える
+// 画面は y が下向きなので、角度を増やす＝右回り
+function senseAgent(sim, i) {
+  const p = sim.p, rand = sim.rand, x = sim.ax[i], y = sim.ay[i], a = sim.aa[i];
+  if (p.pRandom > 0 && rand() < p.pRandom) { sim.aa[i] = rand() * TAU; return; }
+  const F = sense(sim, x, y, a), FL = sense(sim, x, y, a - p.SA), FR = sense(sim, x, y, a + p.SA);
+  let na = a;
+  if (F > FL && F > FR) return;                       // 前がいちばん濃い → そのまま
+  if (F < FL && F < FR) na = a + (rand() < 0.5 ? -p.RA : p.RA); // 前がいちばん薄い → 左右どちらかへ
+  else if (FL < FR) na = a + p.RA;                    // 右が濃い → 右へ
+  else if (FR < FL) na = a - p.RA;                    // 左が濃い → 左へ
+  if (na < 0) na += TAU; else if (na >= TAU) na -= TAU;
+  sim.aa[i] = na;
+}
+
+// 1歩すすめる：Jones 2010 のスケジューラ（運動→感覚）＋ 跡の拡散と減衰
+function step(sim) {
+  const { w, h, p, trail, occ, light, ax, ay, aa, rand } = sim;
+  // エサが誘引物質を出す
+  const fr = p.foodRadius;
+  for (const f of sim.foods) {
+    for (let dy = -fr; dy <= fr; dy++) for (let dx = -fr; dx <= fr; dx++) {
+      if (dx * dx + dy * dy > fr * fr) continue;
+      const x = (f.x | 0) + dx, y = (f.y | 0) + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      trail[y * w + x] += p.foodDep;
+    }
+  }
+  const N = sim.count;
+  const start = N ? Math.floor(rand() * N) : 0;
+  // 運動の段階
+  for (let k = 0; k < N; k++) {
+    const i = (start + k) % N;
+    const x = ax[i], y = ay[i], a = aa[i];
+    const nx = Math.fround(x + Math.cos(a) * p.SS), ny = Math.fround(y + Math.sin(a) * p.SS); // 保存する精度に丸めてからマスを決める
+    const oc = (y | 0) * w + (x | 0);
+    if (nx < 0 || ny < 0 || nx >= w || ny >= h) { aa[i] = rand() * Math.PI * 2; continue; }
+    const nc = (ny | 0) * w + (nx | 0);
+    if (nc !== oc && (occ[nc] || light[nc])) { aa[i] = rand() * Math.PI * 2; continue; }
+    if (nc !== oc) { occ[oc] = 0; occ[nc] = i + 1; }
+    ax[i] = nx; ay[i] = ny;
+    trail[nc] += p.depT;
+  }
+  // 感覚の段階
+  for (let i = 0; i < N; i++) senseAgent(sim, i);
+  // 空腹の更新：エサのそばに来た粒は満腹に戻る。飢えた粒と光の中の粒は消える
+  const ah = sim.ah, foodMap = sim.foodMap;
+  for (let i = sim.count - 1; i >= 0; i--) {
+    const c = (ay[i] | 0) * w + (ax[i] | 0);
+    if (foodMap[c]) ah[i] = 0; else if (ah[i] < 65535) ah[i]++;
+    if (light[c] && rand() < p.lightKill) removeAgent(sim, i);
+    else if (ah[i] > p.starve && rand() < p.starveKill) removeAgent(sim, i);
+  }
+  sim.steps++;
+  if (sim.steps % p.growEvery === 0) growShrink(sim);
+  diffuseDecay(sim);
+}
+
+// 3×3 の平均で拡散し、減衰させる（Jones 2010：diffK=3, decayT）
+function diffuseDecay(sim) {
+  const { w, h, trail, tmp, light } = sim;
+  const keep = 1 - sim.p.decayT;
+  for (let y = 0; y < h; y++) {
+    const r = y * w;
+    for (let x = 0; x < w; x++) {
+      const l = x > 0 ? trail[r + x - 1] : trail[r + x], m = trail[r + x], rr = x < w - 1 ? trail[r + x + 1] : trail[r + x];
+      tmp[r + x] = l + m + rr;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    const up = y > 0 ? (y - 1) * w : y * w, md = y * w, dn = y < h - 1 ? (y + 1) * w : y * w;
+    for (let x = 0; x < w; x++) {
+      const v = (tmp[up + x] + tmp[md + x] + tmp[dn + x]) / 9 * keep;
+      trail[md + x] = light[md + x] ? v * 0.5 : v;
+    }
+  }
+}
+
+function buildSat(sim) {
+  const { w, h, occ, sat } = sim, W = w + 1;
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let x = 0; x < w; x++) { row += occ[y * w + x] ? 1 : 0; sat[(y + 1) * W + x + 1] = sat[y * W + x + 1] + row; }
+  }
+}
+function windowCount(sim, cx, cy, half) {
+  const W = sim.w + 1;
+  const x0 = Math.max(0, cx - half), y0 = Math.max(0, cy - half), x1 = Math.min(sim.w, cx + half + 1), y1 = Math.min(sim.h, cy + half + 1);
+  return sim.sat[y1 * W + x1] - sim.sat[y0 * W + x1] - sim.sat[y1 * W + x0] + sim.sat[y0 * W + x0];
+}
+const NB = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+function growShrink(sim) {
+  const p = sim.p; buildSat(sim);
+  const gh = p.growWin >> 1, sh = p.shrinkWin >> 1;
+  const N = sim.count;
+  const kill = [];
+  for (let i = 0; i < N; i++) {
+    const cx = sim.ax[i] | 0, cy = sim.ay[i] | 0;
+    if (windowCount(sim, cx, cy, sh) > p.shrinkMax) { kill.push(i); continue; }
+    if (sim.count < sim.cap && sim.ah[i] < p.fedGrow && windowCount(sim, cx, cy, gh) <= p.growMax) {
+      const o = (sim.rand() * 8) | 0;
+      for (let k = 0; k < 8; k++) {
+        const d = NB[(o + k) & 7], x = cx + d[0], y = cy + d[1];
+        if (x < 0 || y < 0 || x >= sim.w || y >= sim.h) continue;
+        if (addAgent(sim, x + 0.5, y + 0.5, sim.rand() * Math.PI * 2, sim.ah[i]) >= 0) break;
+      }
+    }
+  }
+  for (let k = kill.length - 1; k >= 0; k--) removeAgent(sim, kill[k]);
+}
+
+// ---- 検証用の計算 ----
+// 跡が閾値以上のマスをつながりとみなし、エサどうしがつながっているかを調べる
+function connectivity(sim, thr) {
+  const { w, h, trail } = sim; thr = thr == null ? 3 : thr;
+  const lab = new Int32Array(w * h); let cur = 0; const q = new Int32Array(w * h);
+  const foodLabel = sim.foods.map((f) => {
+    // エサの近く（半径+2）で閾値を越えるマスを探す
+    const R = sim.p.foodRadius + 2;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const x = (f.x | 0) + dx, y = (f.y | 0) + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      const c = y * w + x;
+      if (trail[c] < thr) continue;
+      if (!lab[c]) {
+        cur++; let qh = 0, qt = 0; q[qt++] = c; lab[c] = cur;
+        while (qh < qt) {
+          const v = q[qh++], vx = v % w, vy = (v / w) | 0;
+          if (vx > 0 && !lab[v - 1] && trail[v - 1] >= thr) { lab[v - 1] = cur; q[qt++] = v - 1; }
+          if (vx < w - 1 && !lab[v + 1] && trail[v + 1] >= thr) { lab[v + 1] = cur; q[qt++] = v + 1; }
+          if (vy > 0 && !lab[v - w] && trail[v - w] >= thr) { lab[v - w] = cur; q[qt++] = v - w; }
+          if (vy < h - 1 && !lab[v + w] && trail[v + w] >= thr) { lab[v + w] = cur; q[qt++] = v + w; }
+        }
+      }
+      return lab[c];
+    }
+    return 0;
+  });
+  const groups = {};
+  foodLabel.forEach((l) => { if (l) groups[l] = (groups[l] || 0) + 1; });
+  const largest = Object.values(groups).reduce((m, v) => Math.max(m, v), 0);
+  let area = 0; for (let i = 0; i < w * h; i++) if (trail[i] >= thr) area++;
+  return { foodLabel, largest, reached: foodLabel.filter((l) => l).length, allConnected: sim.foods.length > 0 && largest === sim.foods.length, area };
+}
+
+function totalTrail(sim) { let s = 0; for (let i = 0; i < sim.trail.length; i++) s += sim.trail[i]; return s; }
+function checkInvariants(sim) {
+  const errs = [];
+  let occN = 0; for (let i = 0; i < sim.occ.length; i++) if (sim.occ[i]) occN++;
+  if (occN !== sim.count) errs.push('occ数と粒数が違う ' + occN + '/' + sim.count);
+  for (let i = 0; i < sim.count; i++) {
+    const c = cellOf(sim, sim.ax[i], sim.ay[i]);
+    if (sim.occ[c] !== i + 1) { errs.push('粒' + i + 'のマスが違う'); break; }
+    if (!(sim.ax[i] >= 0 && sim.ax[i] < sim.w && sim.ay[i] >= 0 && sim.ay[i] < sim.h)) { errs.push('粒' + i + 'が外に出た'); break; }
+  }
+  if (sim.count > sim.cap) errs.push('上限超え');
+  for (let i = 0; i < sim.trail.length; i++) if (!(sim.trail[i] >= 0) || !isFinite(sim.trail[i])) { errs.push('跡に異常値'); break; }
+  return errs;
+}
+
+const api = { senseAgent, rebuildFoodMap, VERSION, DEFAULTS, xorshift32, createSim, addAgent, removeAgent, inoculate, addFood, removeFoodNear, setLight, clearLight, step, diffuseDecay, growShrink, connectivity, totalTrail, checkInvariants, windowCount, buildSat, sense };
+globalThis.Nenkin = api;
+if (typeof module !== 'undefined') module.exports = api;
+})();
+</script>
+
+<script id="app">
+(function () {
+'use strict';
+const N = window.Nenkin;
+const VERSION = N.VERSION;
+const $ = (s) => document.querySelector(s);
+$('#verText').textContent = 'NENKIN v' + VERSION;
+
+// ---------------- 状態 ----------------
+const canvas = $('#scene'), ctx = canvas.getContext('2d');
+let sim = null, seed = 0, mode = 'view', paused = false;
+let cssW = 0, cssH = 0, dpr = 1, cellPx = 3;       // 1マスの画面上の大きさ [CSS px]
+const opt = { speed: 2, foodGlow: true, raw: false, conn: false };
+try { Object.assign(opt, JSON.parse(localStorage.getItem('nenkin.opt') || '{}')); opt.raw = false; opt.conn = false; } catch (e) {}
+function saveOpt() { try { localStorage.setItem('nenkin.opt', JSON.stringify({ speed: opt.speed, foodGlow: opt.foodGlow })); } catch (e) {} }
+
+// 粘菌の色：跡の濃さ → 暗い黄土色 → 黄色 → 白っぽい黄色
+const LUT = new Uint8ClampedArray(256 * 4);
+(function () {
+  const stops = [[0, [40, 28, 4, 0]], [0.10, [110, 78, 8, 90]], [0.35, [214, 160, 22, 200]], [0.65, [246, 206, 60, 245]], [1, [255, 246, 190, 255]]];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255; let k = 0; while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const [t0, c0] = stops[k], [t1, c1] = stops[k + 1], u = Math.min(1, Math.max(0, (t - t0) / (t1 - t0)));
+    for (let j = 0; j < 4; j++) LUT[i * 4 + j] = c0[j] + (c1[j] - c0[j]) * u;
+  }
+})();
+
+// 描画用のキャンバス（マス目と同じ大きさ）
+const slimeCv = document.createElement('canvas'), slimeCtx = slimeCv.getContext('2d');
+const glowCv = document.createElement('canvas'), glowCtx = glowCv.getContext('2d');
+const lightCv = document.createElement('canvas'), lightCtx = lightCv.getContext('2d');
+const lightGlowCv = document.createElement('canvas'), lightGlowCtx = lightGlowCv.getContext('2d');
+const lightTinyCv = document.createElement('canvas'), lightTinyCtx = lightTinyCv.getContext('2d');
+let slimeImg = null, lightImg = null, lightDirty = true;
+const bgCv = document.createElement('canvas');
+
+// エサ（オートミール）の形：エサごとに少しずつ違う、角の丸いいびつな形
+const flakeShapes = new Map();
+function flakeShape(f) {
+  if (flakeShapes.has(f.id)) return flakeShapes.get(f.id);
+  const r = N.xorshift32(f.id * 7919 + seed), pts = [], n = 9, rot = r() * Math.PI;
+  for (let k = 0; k < n; k++) { const a = rot + k / n * Math.PI * 2; const rr = 0.78 + r() * 0.34; pts.push([Math.cos(a) * rr * 1.18, Math.sin(a) * rr * 0.86]); }
+  const s = { pts, rot2: r() * Math.PI * 2, spots: [0, 1, 2].map(() => [(r() - 0.5) * 1.1, (r() - 0.5) * 0.8, 0.10 + r() * 0.12]) };
+  flakeShapes.set(f.id, s); return s;
+}
+
+// ---------------- シャーレを作る ----------------
+function gridSize() {
+  // 1マスの大きさ：だいたい 10万マスになるように。ただし 2〜4px の範囲
+  const area = cssW * cssH;
+  cellPx = Math.max(2, Math.min(4, Math.sqrt(area / 100000)));
+  return { w: Math.max(60, Math.round(cssW / cellPx)), h: Math.max(60, Math.round(cssH / cellPx)) };
+}
+function newDish(s, keepFoods) {
+  const old = sim;
+  seed = s || ((Math.random() * 4294967295) >>> 0) || 1;
+  const g = gridSize();
+  sim = N.createSim(g.w, g.h, { seed });
+  flakeShapes.clear();
+  const r = N.xorshift32(seed ^ 0x9e3779b9);
+  const sx = g.w / cssW, sy = g.h / cssH;
+  // 上下の帯の下に隠れないところに置く
+  const top = 80 * sy, bot = g.h - 130 * sy, mx = 30 * sx;
+  if (keepFoods && old && old.foods.length) {
+    for (const f of old.foods) N.addFood(sim, f.x / old.w * g.w, f.y / old.h * g.h);
+  } else {
+    // はじまりのエサ（ここに粘菌を植える）＋ まわりにエサ3つ
+    N.addFood(sim, g.w * (0.35 + r() * 0.3), top + (bot - top) * (0.35 + r() * 0.3));
+    let tries = 0;
+    while (sim.foods.length < 4 && tries++ < 200) {
+      const x = mx + r() * (g.w - 2 * mx), y = top + r() * (bot - top);
+      const minD = Math.min(g.w, g.h) * 0.28;
+      if (sim.foods.every((f) => Math.hypot(f.x - x, f.y - y) > minD)) N.addFood(sim, x, y);
+    }
+  }
+  const f0 = sim.foods[0];
+  if (f0) N.inoculate(sim, f0.x, f0.y, 6, 90);
+  lightDirty = true; connInfo = null;
+  for (const cv of [slimeCv, lightCv]) { cv.width = g.w; cv.height = g.h; }
+  glowCv.width = Math.max(8, g.w >> 2); glowCv.height = Math.max(8, g.h >> 2);
+  lightGlowCv.width = Math.max(8, g.w >> 2); lightGlowCv.height = Math.max(8, g.h >> 2);
+  lightTinyCv.width = Math.max(4, g.w >> 4); lightTinyCv.height = Math.max(4, g.h >> 4);
+  slimeImg = slimeCtx.createImageData(g.w, g.h);
+  lightImg = lightCtx.createImageData(g.w, g.h);
+  allConnectedShown = false;
+  updateCount();
+}
+
+// ---------------- 画面の大きさ ----------------
+function makeBackground() {
+  bgCv.width = Math.round(cssW * dpr); bgCv.height = Math.round(cssH * dpr);
+  const b = bgCv.getContext('2d');
+  const g = b.createRadialGradient(bgCv.width * 0.5, bgCv.height * 0.45, 0, bgCv.width * 0.5, bgCv.height * 0.45, Math.hypot(bgCv.width, bgCv.height) * 0.6);
+  g.addColorStop(0, '#15140f'); g.addColorStop(0.6, '#0b0b09'); g.addColorStop(1, '#050506');
+  b.fillStyle = g; b.fillRect(0, 0, bgCv.width, bgCv.height);
+  // 寒天のざらつき（細かい点）
+  const r = N.xorshift32(12345), n = Math.round(bgCv.width * bgCv.height / 900);
+  for (let i = 0; i < n; i++) { b.fillStyle = 'rgba(255,240,200,' + (0.012 + r() * 0.025).toFixed(3) + ')'; b.fillRect(r() * bgCv.width, r() * bgCv.height, dpr, dpr); }
+}
+function resize(first) {
+  const w = innerWidth || document.documentElement.clientWidth, h = innerHeight || document.documentElement.clientHeight;
+  if (w < 2 || h < 2) { setTimeout(() => resize(first), 100); return; } // まだ画面の大きさが決まっていない
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const changed = !first && sim && (Math.abs(w - cssW) / cssW > 0.15 || Math.abs(h - cssH) / cssH > 0.15);
+  cssW = w; cssH = h;
+  makeBackground();
+  if (first) newDish(0);
+  else if (changed) { newDish(seed, true); story('画面の向きに合わせて、植えなおしました'); }
+}
+let resizeTimer = 0;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => resize(false), 250); });
+
+// ---------------- 描画 ----------------
+function renderSlime() {
+  const { w, h, trail } = sim, d = slimeImg.data, n = w * h;
+  if (opt.raw) {
+    for (let i = 0, j = 0; i < n; i++, j += 4) { const v = Math.min(255, trail[i] * 6) | 0; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
+  } else {
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      const t = trail[i];
+      const k = t <= 0.2 ? 0 : (Math.min(255, 255 * (1 - Math.exp(-t / 18))) | 0) * 4;
+      d[j] = LUT[k]; d[j + 1] = LUT[k + 1]; d[j + 2] = LUT[k + 2]; d[j + 3] = LUT[k + 3];
+    }
+  }
+  if (opt.conn && connMask) {
+    for (let i = 0, j = 0; i < n; i++, j += 4) if (connMask[i]) { d[j] = d[j] * 0.4; d[j + 1] = d[j + 1] * 0.6 + 60; d[j + 2] = 220; d[j + 3] = 255; }
+  }
+  slimeCtx.putImageData(slimeImg, 0, 0);
+}
+function renderLight() {
+  if (!lightDirty) return; lightDirty = false;
+  const { w, h, light } = sim, d = lightImg.data;
+  for (let i = 0, j = 0; i < w * h; i++, j += 4) { d[j] = 255; d[j + 1] = 246; d[j + 2] = 222; d[j + 3] = light[i] ? 26 : 0; }
+  lightCtx.putImageData(lightImg, 0, 0);
+  // 縮めた絵をさらに縮めて戻すと、ふちがぼやけた「光だまり」になる
+  lightTinyCtx.clearRect(0, 0, lightTinyCv.width, lightTinyCv.height);
+  lightTinyCtx.drawImage(lightCv, 0, 0, lightTinyCv.width, lightTinyCv.height);
+  lightGlowCtx.clearRect(0, 0, lightGlowCv.width, lightGlowCv.height);
+  lightGlowCtx.drawImage(lightCv, 0, 0, lightGlowCv.width, lightGlowCv.height);
+  lightGlowCtx.globalCompositeOperation = 'lighter';
+  lightGlowCtx.drawImage(lightTinyCv, 0, 0, lightGlowCv.width, lightGlowCv.height);
+  lightGlowCtx.globalCompositeOperation = 'source-over';
+}
+function drawFlake(f, t) {
+  const s = flakeShape(f), sx = cssW / sim.w, sy = cssH / sim.h;
+  const x = f.x * sx, y = f.y * sy, R = (sim.p.foodRadius + 1.2) * Math.min(sx, sy) * 1.25;
+  ctx.save(); ctx.translate(x, y);
+  if (opt.foodGlow) {
+    const g = ctx.createRadialGradient(0, 0, R * 0.5, 0, 0, R * 3.2);
+    g.addColorStop(0, 'rgba(255,236,190,0.16)'); g.addColorStop(1, 'rgba(255,236,190,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R * 3.2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.rotate(s.rot2); ctx.scale(R, R);
+  ctx.beginPath();
+  const p = s.pts;
+  for (let k = 0; k < p.length; k++) {
+    const a = p[k], b = p[(k + 1) % p.length], mxp = (a[0] + b[0]) / 2, myp = (a[1] + b[1]) / 2;
+    if (k === 0) ctx.moveTo((p[p.length - 1][0] + a[0]) / 2, (p[p.length - 1][1] + a[1]) / 2);
+    ctx.quadraticCurveTo(a[0], a[1], mxp, myp);
+  }
+  ctx.closePath();
+  const fg = ctx.createLinearGradient(-1, -1, 1, 1);
+  fg.addColorStop(0, '#efe0bd'); fg.addColorStop(1, '#bfa576');
+  ctx.fillStyle = fg; ctx.fill();
+  ctx.lineWidth = 0.08; ctx.strokeStyle = 'rgba(90,70,40,0.65)'; ctx.stroke();
+  for (const sp of s.spots) { ctx.fillStyle = 'rgba(150,120,80,0.35)'; ctx.beginPath(); ctx.ellipse(sp[0], sp[1], sp[2] * 1.4, sp[2], 0.4, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+function draw(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(bgCv, 0, 0);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  renderSlime(); renderLight();
+  ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+  // ぼんやりした光（小さく縮めてから引き伸ばすと、軽い「ぼかし」になる）
+  if (!opt.raw) {
+    glowCtx.clearRect(0, 0, glowCv.width, glowCv.height);
+    glowCtx.drawImage(slimeCv, 0, 0, glowCv.width, glowCv.height);
+    ctx.globalAlpha = 0.38; ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(glowCv, 0, 0, cssW, cssH);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  }
+  ctx.drawImage(slimeCv, 0, 0, cssW, cssH);
+  // 光：ぼかした広がり＋やわらかい芯
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(lightGlowCv, 0, 0, cssW, cssH);
+  ctx.globalCompositeOperation = 'source-over';
+  for (const f of sim.foods) drawFlake(f, t);
+}
+
+// ---------------- 操作 ----------------
+function toGrid(e) {
+  const rc = canvas.getBoundingClientRect();
+  return { x: (e.clientX - rc.left) / cssW * sim.w, y: (e.clientY - rc.top) / cssH * sim.h, sx: e.clientX, sy: e.clientY };
+}
+const MAX_FOODS = 12;
+let drag = null;
+function lightAt(g) {
+  const r = 24 / cellPx; // 光の半径：画面で約24px
+  if (drag && drag.last) {
+    const dx = g.x - drag.last.x, dy = g.y - drag.last.y, d = Math.hypot(dx, dy), n = Math.ceil(d / (r * 0.5));
+    for (let k = 1; k <= n; k++) N.setLight(sim, drag.last.x + dx * k / n, drag.last.y + dy * k / n, r, true);
+  } else N.setLight(sim, g.x, g.y, r, true);
+  drag.last = g; lightDirty = true;
+}
+canvas.addEventListener('pointerdown', (e) => {
+  hideGuide();
+  if (!sim) return;
+  canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+  const g = toGrid(e);
+  drag = { id: e.pointerId, start: g, last: null, moved: false };
+  if (mode === 'light') lightAt(g);
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!drag || drag.id !== e.pointerId) return;
+  const g = toGrid(e);
+  if (Math.hypot(g.sx - drag.start.sx, g.sy - drag.start.sy) > 6) drag.moved = true;
+  if (mode === 'light') lightAt(g);
+});
+function endDrag(e) {
+  if (!drag || drag.id !== e.pointerId) return;
+  const g = toGrid(e), d = drag; drag = null;
+  if (mode === 'food' && !d.moved) {
+    const near = 16 / cellPx + sim.p.foodRadius;
+    const removed = N.removeFoodNear(sim, g.x, g.y, near);
+    if (removed) { flakeShapes.delete(removed.id); toast('エサを片づけました'); }
+    else if (sim.foods.length >= MAX_FOODS) toast('エサは ' + MAX_FOODS + ' 個までです');
+    else if (sim.light[(g.y | 0) * sim.w + (g.x | 0)]) toast('光の中には置けません');
+    else {
+      N.addFood(sim, g.x, g.y); ripple(g.sx, g.sy, true);
+      if (sim.count === 0) { N.inoculate(sim, g.x, g.y, 6, 90); story('粘菌を植えました'); }
+    }
+    allConnectedShown = false; updateConn(); updateCount();
+  } else if (mode === 'view' && !d.moved) ripple(g.sx, g.sy, false);
+}
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', (e) => { if (drag && drag.id === e.pointerId) drag = null; });
+
+const HINTS = {
+  view: '粘菌がエサをさがして広がり、エサどうしを道でつなぎます',
+  food: 'タップでエサ（オートミール）を置く。エサをタップすると片づけます',
+  light: 'なぞると光が当たる。粘菌は光を避けます',
+};
+let hintTimer = 0;
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === m)));
+  const h = $('#hint'); h.textContent = HINTS[m]; h.classList.remove('fade');
+  clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.add('fade'), 4200);
+}
+document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.m)));
+function setPaused(v) {
+  paused = v;
+  $('#pausedChip').hidden = !v;
+  $('#btnPause').setAttribute('aria-pressed', String(v));
+  $('#btnPause').setAttribute('aria-label', v ? '再開' : '一時停止');
+  $('#pauseIcon').innerHTML = v ? '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>' : '<path d="M9 6v12M15 6v12"/>';
+}
+$('#btnPause').addEventListener('click', () => setPaused(!paused));
+addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); setPaused(!paused); }
+  else if (e.key === '1') setMode('view'); else if (e.key === '2') setMode('food'); else if (e.key === '3') setMode('light');
+});
+let storyTimer = 0;
+function story(msg) {
+  const s = $('#story'); s.textContent = msg; s.classList.remove('fade');
+  clearTimeout(storyTimer); storyTimer = setTimeout(() => s.classList.add('fade'), 3800);
+}
+let toastTimer = 0;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2400); }
+function ripple(x, y, food) {
+  const d = document.createElement('div'); d.className = 'ripple' + (food ? ' food' : '');
+  d.style.left = x + 'px'; d.style.top = y + 'px';
+  document.body.appendChild(d); setTimeout(() => d.remove(), 1000);
+}
+const guide = $('#guide');
+function showGuide() { guide.hidden = false; guide.classList.remove('fade'); }
+function hideGuide() { if (guide.hidden || guide.classList.contains('fade')) return; guide.classList.add('fade'); setTimeout(() => { guide.hidden = true; }, 500); try { localStorage.setItem('nenkin.guided', '1'); } catch (e) {} }
+
+// つながりの判定（重いので時々だけ）
+let connInfo = null, connMask = null, allConnectedShown = false;
+function updateConn() {
+  connInfo = N.connectivity(sim, 3);
+  if (opt.conn) { connMask = new Uint8Array(sim.w * sim.h); for (let i = 0; i < connMask.length; i++) connMask[i] = sim.trail[i] >= 3 ? 1 : 0; }
+  if (connInfo.allConnected && sim.foods.length >= 2 && !allConnectedShown) { allConnectedShown = true; story('すべてのエサが道でつながりました'); }
+  if (!connInfo.allConnected) allConnectedShown = false;
+}
+function updateCount() {
+  const total = sim.foods.length;
+  const linked = connInfo && total >= 2 ? (connInfo.largest >= 2 ? connInfo.largest : 0) : 0;
+  $('#count').textContent = linked + '/' + total;
+}
+
+// 設定シート
+const sheet = $('#sheet'), backdrop = $('#backdrop');
+function openSheet(v) { sheet.hidden = !v; backdrop.hidden = !v; }
+$('#btnSettings').addEventListener('click', () => openSheet(true));
+$('#btnClose').addEventListener('click', () => openSheet(false));
+backdrop.addEventListener('click', () => openSheet(false));
+function segInit(id, cur, onPick) {
+  const el = $(id);
+  const mark = (v) => el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(v))));
+  mark(cur);
+  el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mark(b.dataset.v); onPick(b.dataset.v); saveOpt(); });
+}
+segInit('#optSpeed', opt.speed, (v) => { opt.speed = +v; });
+$('#optFoodGlow').checked = opt.foodGlow;
+$('#optFoodGlow').addEventListener('change', (e) => { opt.foodGlow = e.target.checked; saveOpt(); });
+$('#btnNew').addEventListener('click', () => { newDish(0); openSheet(false); story('新しいシャーレ'); });
+$('#btnClearFood').addEventListener('click', () => { sim.foods.length = 0; N.rebuildFoodMap(sim); flakeShapes.clear(); updateConn(); updateCount(); openSheet(false); setMode('food'); story('エサを片づけました。粘菌はやがて飢えて消えます'); });
+$('#btnClearLight').addEventListener('click', () => { N.clearLight(sim); lightDirty = true; openSheet(false); story('光を消しました'); });
+$('#btnGuide').addEventListener('click', () => { openSheet(false); showGuide(); });
+let verTaps = 0, verTimer = 0;
+$('#ver').addEventListener('click', () => { verTaps++; clearTimeout(verTimer); verTimer = setTimeout(() => { verTaps = 0; }, 1500); if (verTaps >= 5) { verTaps = 0; $('#devSec').hidden = false; toast('裏モードを開きました'); } });
+$('#btnDevHide').addEventListener('click', () => { $('#devSec').hidden = true; });
+$('#optDebug').addEventListener('change', (e) => { $('#debug').hidden = !e.target.checked; });
+$('#optRaw').addEventListener('change', (e) => { opt.raw = e.target.checked; });
+$('#optConn').addEventListener('change', (e) => { opt.conn = e.target.checked; connMask = null; updateConn(); });
+$('#btnSeed').addEventListener('click', () => { const v = parseInt($('#seedInput').value, 10); if (!(v >= 1 && v <= 4294967295)) { toast('シードは 1〜4294967295 の整数です'); return; } newDish(v); openSheet(false); story('シード ' + v); });
+
+// ---------------- ループ ----------------
+let last = performance.now(), fpsAcc = 0, fpsN = 0, frameNo = 0, msAvg = 0, spfNow = 0;
+function frame(t, once) {
+  const dt = Math.min(100, t - last); last = t;
+  fpsAcc += dt; fpsN++;
+  if (!paused && sheet.hidden) {
+    // 速さ × 2 歩。重い端末では 1コマ 12ms を超えないように減らす
+    const want = opt.speed * 2, t0 = performance.now();
+    let k = 0;
+    for (; k < want; k++) { N.step(sim); if (performance.now() - t0 > 12) { k++; break; } }
+    const ms = (performance.now() - t0) / Math.max(1, k);
+    msAvg = msAvg ? msAvg * 0.95 + ms * 0.05 : ms; spfNow = k;
+  }
+  frameNo++;
+  if (frameNo % 30 === 0) { updateConn(); updateCount(); }
+  draw(t);
+  if (!$('#debug').hidden && frameNo % 15 === 0) {
+    $('#dN').textContent = sim.count; $('#dCap').textContent = sim.cap; $('#dStep').textContent = sim.steps;
+    $('#dSpf').textContent = spfNow; $('#dMs').textContent = msAvg.toFixed(2);
+    $('#dGrid').textContent = sim.w + '×' + sim.h + '（' + cellPx.toFixed(1) + 'px）';
+    $('#dConn').textContent = connInfo ? connInfo.largest + '/' + sim.foods.length + '（届いた ' + connInfo.reached + '）' : '-';
+    $('#dArea').textContent = connInfo ? connInfo.area : '-';
+    $('#dBD').textContent = sim.born + '／' + sim.died;
+    $('#dSeed').textContent = seed;
+    $('#dFps').textContent = (1000 / (fpsAcc / fpsN)).toFixed(0); fpsAcc = 0; fpsN = 0;
+  }
+  if (!once) requestAnimationFrame(frame);
+}
+
+window.NenkinApp = { get sim() { return sim; }, get seed() { return seed; }, newDish, setMode, frameOnce: () => frame(performance.now(), true) }; // 確認用（開発者向け）
+resize(true);
+setMode('view');
+function startLoop() { if (sim) requestAnimationFrame(frame); else setTimeout(startLoop, 100); }
+let guided = false; try { guided = localStorage.getItem('nenkin.guided') === '1'; } catch (e) {}
+if (!guided) showGuide(); else story('粘菌がエサをさがしはじめました');
+startLoop();
+})();
+</script>
+</body>
+</html>

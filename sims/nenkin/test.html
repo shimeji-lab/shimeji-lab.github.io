@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NENKIN テスト</title>
+<style>
+body{font-family:system-ui,"Zen Kaku Gothic New",sans-serif;background:#0b0b09;color:#f1eee4;margin:0;padding:16px}
+h1{font-size:18px}
+table{border-collapse:collapse;width:100%;max-width:980px}
+td,th{border:1px solid #4a4430;padding:6px 8px;text-align:left;font-size:13px;vertical-align:top}
+.ok{color:#9be29b;font-weight:700}.ng{color:#ff9b8a;font-weight:700}
+small{color:#a19b88}
+</style>
+</head>
+<body>
+<h1>NENKIN 計算部分の自動テスト <small id="ver"></small></h1>
+<p id="summary">実行中…（全部で十数秒かかります）</p>
+<table><thead><tr><th>ID</th><th>内容</th><th>結果</th><th>詳細</th><th>時間</th></tr></thead><tbody id="rows"></tbody></table>
+
+<script id="tests">
+// 試験の中身。node でも同じものを回せるように、Nenkin を受け取って結果の配列を返す関数にしている
+globalThis.NenkinTests = function (N) {
+  const results = [];
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const test = (id, name, fn) => {
+    const t0 = now();
+    try { const detail = fn(); results.push({ id, name, ok: true, detail: detail || '', ms: now() - t0 }); }
+    catch (e) { results.push({ id, name, ok: false, detail: e.message, ms: now() - t0 }); }
+  };
+  const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
+  const run = (sim, n) => { for (let i = 0; i < n; i++) N.step(sim); };
+  const near = (a, b, tol) => Math.abs(a - b) <= tol;
+  // 標準の場面：はじまりのエサに粘菌を植え、まわりにエサを置く
+  const scene = (seed, w, h, foods, params) => {
+    const sim = N.createSim(w, h, { seed, params });
+    N.addFood(sim, foods[0][0], foods[0][1]); N.inoculate(sim, foods[0][0], foods[0][1], 6, 90);
+    for (let k = 1; k < foods.length; k++) N.addFood(sim, foods[k][0], foods[k][1]);
+    return sim;
+  };
+
+  test('T01', '既定値が論文（Jones 2010）の値になっている', () => {
+    const p = N.DEFAULTS, deg = 180 / Math.PI;
+    assert(near(p.SA * deg, 22.5, 1e-9) && near(p.RA * deg, 45, 1e-9), 'SA/RA が違う');
+    assert(p.SO === 9 && p.SS === 1 && p.depT === 5 && p.decayT === 0.1, 'SO/SS/depT/decayT が違う');
+    return 'SA=22.5° RA=45° SO=9 SS=1 depT=5 decayT=0.1';
+  });
+
+  test('T02', '同じシードなら同じ結果になる（再現性）', () => {
+    const a = scene(42, 120, 90, [[60, 45], [20, 20], [100, 70]]), b = scene(42, 120, 90, [[60, 45], [20, 20], [100, 70]]);
+    run(a, 300); run(b, 300);
+    assert(a.count === b.count, '粒の数が違う ' + a.count + '/' + b.count);
+    assert(N.totalTrail(a) === N.totalTrail(b), '跡の総量が違う');
+    const c = scene(43, 120, 90, [[60, 45], [20, 20], [100, 70]]); run(c, 300);
+    assert(N.totalTrail(a) !== N.totalTrail(c), 'シードを変えても同じ');
+    return '粒 ' + a.count + '、跡の総量 ' + N.totalTrail(a).toFixed(1);
+  });
+
+  test('T03', '拡散（3×3平均）は跡の総量を変えない', () => {
+    const sim = N.createSim(40, 40, { params: { decayT: 0 } });
+    sim.trail[20 * 40 + 20] = 900;
+    N.diffuseDecay(sim);
+    assert(near(N.totalTrail(sim), 900, 1e-3), '総量が変わった ' + N.totalTrail(sim));
+    assert(near(sim.trail[20 * 40 + 20], 100, 1e-4) && near(sim.trail[19 * 40 + 19], 100, 1e-4), '9マスに等分されていない');
+    assert(sim.trail[18 * 40 + 20] === 0, '2マス先まで広がった');
+    return '中央900 → 9マスに100ずつ';
+  });
+
+  test('T04', '減衰：毎歩 decayT（10%）ずつ薄れる', () => {
+    const sim = N.createSim(30, 30);
+    sim.trail.fill(10);
+    N.diffuseDecay(sim);
+    for (let i = 0; i < sim.trail.length; i++) assert(near(sim.trail[i], 9, 1e-5), 'マス' + i + 'が ' + sim.trail[i]);
+    return '一様な10 → 9';
+  });
+
+  test('T05', '感覚の規則：濃い方へ45°曲がる・前が濃ければまっすぐ', () => {
+    const p = N.DEFAULTS, mk = () => { const s = N.createSim(80, 80); N.addAgent(s, 40.5, 40.5, 0); return s; };
+    const put = (s, ang, v) => { const x = 40.5 + Math.cos(ang) * p.SO, y = 40.5 + Math.sin(ang) * p.SO; s.trail[(y | 0) * 80 + (x | 0)] = v; };
+    let s = mk(); put(s, p.SA, 10); N.senseAgent(s, 0); assert(near(s.aa[0], p.RA, 1e-6), '右が濃いのに右へ曲がらない ' + s.aa[0]);
+    s = mk(); put(s, -p.SA, 10); N.senseAgent(s, 0); assert(near(s.aa[0], Math.PI * 2 - p.RA, 1e-6), '左が濃いのに左へ曲がらない ' + s.aa[0]);
+    s = mk(); put(s, 0, 10); N.senseAgent(s, 0); assert(s.aa[0] === 0, '前が濃いのに曲がった');
+    s = mk(); put(s, p.SA, 10); put(s, -p.SA, 10); N.senseAgent(s, 0);
+    assert(near(s.aa[0], p.RA, 1e-6) || near(s.aa[0], Math.PI * 2 - p.RA, 1e-6), '前が薄いのに左右どちらにも曲がらない');
+    return '右→+45° 左→−45° 前→0°';
+  });
+
+  test('T06', '1マスに粒は1つ：ふさがっていたら進まず向きを変える', () => {
+    const s = N.createSim(30, 30);
+    // 右の壁ぎわに3つ並べる。いちばん右は壁、ほかは右どなりにふさがれて進めない
+    N.addAgent(s, 27.5, 10.5, 0); N.addAgent(s, 28.5, 10.5, 0); N.addAgent(s, 29.5, 10.5, 0);
+    assert(N.addAgent(s, 27.2, 10.7, 0) === -1, '同じマスに2つ目を置けてしまった');
+    s.p.SO = 0.01; // 感覚の段階で向きが変わらないように、感覚器を足元に置く
+    const before = s.aa[0];
+    N.step(s);
+    assert((s.ax[0] | 0) === 27 && (s.ax[1] | 0) === 28, 'ふさがったマスへ進んだ');
+    assert(s.aa[0] !== before, '向きが変わっていない');
+    assert(N.checkInvariants(s).length === 0, N.checkInvariants(s).join(','));
+    return '進まず、向きをランダムに変えた';
+  });
+
+  test('T07', '長く回しても壊れない（粒の位置・マス・上限・跡の値）', () => {
+    const sim = scene(7, 160, 110, [[80, 55], [20, 20], [140, 25], [30, 95], [135, 90]]);
+    N.setLight(sim, 80, 20, 8, true);
+    for (let k = 0; k < 6; k++) { run(sim, 250); const e = N.checkInvariants(sim); assert(e.length === 0, (k + 1) * 250 + '歩目：' + e.join(',')); }
+    N.removeFoodNear(sim, 20, 20, 3); run(sim, 200);
+    assert(N.checkInvariants(sim).length === 0, 'エサを外した後に壊れた');
+    return '1700歩、粒 ' + sim.count + '／上限 ' + sim.cap;
+  });
+
+  test('T08', '粘菌が広がり、エサどうしを道でつなぐ（3つのシード）', () => {
+    const foods = [[100, 70], [30, 25], [170, 30], [40, 115], [165, 110]];
+    const out = [];
+    for (const seed of [1, 2, 3]) {
+      const sim = scene(seed, 200, 140, foods);
+      let at = -1;
+      for (let s = 1; s <= 5000; s++) { N.step(sim); if (s % 250 === 0 && N.connectivity(sim, 3).allConnected) { at = s; break; } }
+      assert(at > 0, 'シード' + seed + '：5000歩でつながらない（最大 ' + N.connectivity(sim, 3).largest + '/5）');
+      out.push(at);
+    }
+    return '5つのエサが全部つながった歩数：' + out.join(', ');
+  });
+
+  test('T09', '道は画面を埋めつくさない（使わない道は消える）', () => {
+    const sim = scene(5, 200, 140, [[100, 70], [30, 25], [170, 30], [40, 115], [165, 110]]);
+    run(sim, 4000);
+    const c = N.connectivity(sim, 3), frac = c.area / (sim.w * sim.h);
+    assert(c.allConnected, 'つながっていない');
+    assert(frac < 0.45, '道の面積が ' + (frac * 100).toFixed(0) + '%');
+    return '道の面積 ' + (frac * 100).toFixed(0) + '%、粒 ' + sim.count;
+  });
+
+  test('T10', 'エサがないと粘菌は飢えて消えていく', () => {
+    const sim = N.createSim(120, 90, { seed: 3 });
+    N.inoculate(sim, 60, 45, 6, 90);
+    run(sim, 400); const peak = sim.count;
+    run(sim, 900);
+    assert(peak > 0 && sim.count < peak * 0.05, '減っていない ' + peak + '→' + sim.count);
+    return peak + ' → ' + sim.count;
+  });
+
+  test('T11', '光は通せんぼ：光の壁の向こうへは届かない', () => {
+    const foods = [[40, 60], [160, 60]];
+    const free = scene(11, 200, 120, foods), wall = scene(11, 200, 120, foods);
+    for (let y = 0; y < 120; y += 3) N.setLight(wall, 100, y, 6, true);
+    let fAt = -1;
+    for (let s = 1; s <= 4000; s++) {
+      N.step(free); N.step(wall);
+      if (fAt < 0 && s % 250 === 0 && N.connectivity(free, 3).allConnected) fAt = s;
+      for (let i = 0; i < wall.count; i++) assert(!wall.light[(wall.ay[i] | 0) * 200 + (wall.ax[i] | 0)] , '粒が光の中にいる');
+    }
+    assert(fAt > 0, '光がなくてもつながらない');
+    assert(!N.connectivity(wall, 3).allConnected, '光の壁を越えてつながった');
+    let right = 0; for (let i = 0; i < wall.count; i++) if (wall.ax[i] > 106) right++;
+    assert(right === 0, '壁の向こうに粒が ' + right);
+    return '光なし：' + fAt + '歩でつながる／光の壁：つながらず、向こう側の粒 0';
+  });
+
+  test('T12', '光を後から当てると、中にいた粒は消える', () => {
+    const sim = scene(4, 160, 110, [[80, 55], [20, 20], [140, 90]]);
+    run(sim, 1500);
+    N.setLight(sim, 80, 55, 25, true);
+    const inLit = () => { let n = 0; for (let i = 0; i < sim.count; i++) if (sim.light[(sim.ay[i] | 0) * 160 + (sim.ax[i] | 0)]) n++; return n; };
+    const before = inLit(); run(sim, 120);
+    assert(before > 0, '光を当てる前から中に粒がいない');
+    assert(inLit() < before * 0.02, '消えていない ' + before + '→' + inLit());
+    return before + ' → ' + inLit();
+  });
+
+  test('T13', 'エサの片づけ：近いものだけ消え、エサの印も消える', () => {
+    const sim = N.createSim(60, 60);
+    N.addFood(sim, 10, 10); N.addFood(sim, 40, 40);
+    assert(N.removeFoodNear(sim, 30, 30, 5) === null, '遠いのに消えた');
+    const f = N.removeFoodNear(sim, 41, 39, 5);
+    assert(f && f.x === 40 && sim.foods.length === 1, '近いのに消えない');
+    assert(sim.foodMap[40 * 60 + 40] === 0 && sim.foodMap[10 * 60 + 10] === 1, 'エサの印が残った');
+    return 'OK';
+  });
+
+  return results;
+};
+</script>
+
+<script>
+(async () => {
+  const sum = document.getElementById('summary');
+  let html;
+  try { html = await (await fetch('index.html?v=' + Date.now())).text(); }
+  catch (e) { sum.innerHTML = '<span class="ng">index.html を読めません。</span> ファイルを直接開いた場合は、サーバー経由（http://〜）で開いてください。'; return; }
+  // index.html の <script id="core"> だけを取り出して実行（画面に依存しない部分）
+  const core = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
+  new Function(core)();
+  document.getElementById('ver').textContent = 'v' + Nenkin.VERSION;
+  await new Promise((r) => setTimeout(r, 30));
+  const results = NenkinTests(Nenkin);
+  const rows = document.getElementById('rows');
+  for (const r of results) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + r.id + '</td><td>' + r.name + '</td><td class="' + (r.ok ? 'ok">合格' : 'ng">不合格') + '</td><td></td><td>' + (r.ms / 1000).toFixed(1) + '秒</td>';
+    tr.children[3].textContent = r.detail;
+    rows.appendChild(tr);
+  }
+  const ng = results.filter((r) => !r.ok).length;
+  sum.innerHTML = ng ? '<span class="ng">' + ng + ' 件 不合格</span> ／ 全 ' + results.length + ' 件' : '<span class="ok">全 ' + results.length + ' 件 合格</span>';
+  document.title = (ng ? '✗ ' : '✓ ') + document.title;
+})();
+</script>
+</body>
+</html>
