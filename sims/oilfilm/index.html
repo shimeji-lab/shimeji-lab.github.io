@@ -1,12 +1,22 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OIL FILM"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>OIL FILM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <!--
-  OIL FILM 油膜シミュレータ  v0.11「CONNECT · CUT · STRETCH」
+  OIL FILM 油膜シミュレータ  v0.13「CONNECT · CUT · STRETCH」
   準拠：OIL FILM 詳細設計書 v0.2（操作仕様）。計算は v0.3 で輪郭モデルに変更
   モデル：油のしずくの輪郭（点の輪）だけを追う。界面張力（線張力）・面積の保存・油の粘り・汁の抵抗・
           しずく同士の汁の膜（押し返しと、接触が続くと合体）・くびれでの分裂・箸（円い固体と付着）
 
   更新履歴
+  v0.13 2026-11-11 傾きのセンサーが使えないとき、理由と直し方を設定の「傾けて揺らす」の下に出す（保存したファイルを開いた・アプリ内の表示・
+                   ブラウザのサイトの設定でブロック）。これまでは「許可されませんでした」と出るだけだった。
+                   新しい Chrome（Android）は iPhone と同じく許可を答える仕組みを持ち、そこで断られていた。エンジンは v0.12 のまま
+  v0.12 2026-11-10 レビューにもとづく改善（エンジン v0.12）。しずくの動きは v0.11 と同じ（6つの場面で、輪郭の点が1点残らず同じ値になることを確認）。
+                   ・計算を軽く：箸でかき回している間の計算時間が約1/3に（パソコンでの計測で 1コマ 16.6 → 5.3 ms）。
+                     いちばん効いたのは、傾きの力の入れ物の作り方（JavaScript エンジンの最適化が毎刻み外れていた）。
+                     ほかに、眠ったしずく同士の引き合い・重なりの確認・点の整理で、結果が変わらない計算を省いた
+                   ・すべてのしずくが止まったら、計算と描画を休む（同じ絵を毎秒60回描き直していた。電池の節約）。保存も、動いたときだけ
+                   ・スマホを回したとき、しずくが縁に押しつぶされてまとめて合体していたのを修正（器ごと伸び縮みしたとして輪郭を写す）
+                   ・自動検証 B22〜B24 を追加（回転・アドレスバー・計算を省いても結果が同じ）
   v0.11 2026-11-08 器の縁のしずくは、真ん中と違う動きに（エンジン v0.11）。縁の近くでは汁が壁に引き止められて流れが弱まる（境界層）。
                    壁に触れたしずくは油が壁を濡らして貼りつき、弱い傾きでは動かない。強く傾けると壁に沿って滑る。
                    貼りつく力は触れている長さに、流す力は油の量に比例するので、小さなしずくほど貼りつきやすい。自動検証 B20・B21 を追加
@@ -156,6 +166,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .row .lbl { flex: 1; min-width: 0; }
 .row .lbl small { display: block; color: var(--mute); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+.row .lbl small[hidden] { display: none; }
 .switch { position: relative; width: 48px; height: 28px; flex: none; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
 .switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(214, 228, 222, 0.16); transition: background .2s; pointer-events: none; }
@@ -241,7 +252,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     <label class="switch"><input type="checkbox" id="optRing" aria-label="箸の先を表示"><span></span></label>
   </div>
   <div class="row" id="rowTilt" hidden>
-    <div class="lbl">傾けて揺らす<small>スマホをどんぶりに見立てます。傾けたり揺らしたりすると、汁ごと油が流れます。持ったままの傾きには少しずつ慣れて、止まります。</small></div>
+    <div class="lbl">傾けて揺らす<small>スマホをどんぶりに見立てます。傾けたり揺らしたりすると、汁ごと油が流れます。持ったままの傾きには少しずつ慣れて、止まります。</small><small id="tiltNote" hidden></small></div>
     <label class="switch"><input type="checkbox" id="optTilt" aria-label="傾けて揺らす"><span></span></label>
   </div>
   <div class="btn-row">
@@ -274,6 +285,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <details class="hist">
       <summary>更新履歴</summary>
+      <p class="ver">v0.13（2026-11-11）傾きのセンサーが使えないとき、理由と直し方を設定の「傾けて揺らす」の下に出す</p>
+      <p class="ver">v0.12（2026-11-10）計算を軽く（箸でかき回している間は約1/3。しずくの動きは v0.11 と同じ）。液面が止まったら計算と描画を休む。スマホを回してもしずくの並びが崩れない</p>
       <p class="ver">v0.11（2026-11-08）器の縁のしずくは流れにくく、壁に貼りつく。強く傾けると壁に沿って滑る。小さなしずくほど貼りつきやすい</p>
       <p class="ver">v0.10（2026-11-08）スマホを傾けたり揺らしたりすると、汁ごと油が流れるように（スマホのときだけ。設定の「傾けて揺らす」で切れます）</p>
       <p class="ver">v0.9（2026-11-07）押しつぶされたしずくが三角や角ばった形のまま固まる不具合を修正。小さな粒は丸に戻り、止めるのは丸いしずくだけ。止まりかけの輪郭の細かな揺れは描画でならす</p>
@@ -288,7 +301,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
   </section>
-  <p class="ver" id="ver"><b>OIL FILM v0.11</b> CONNECT · CUT · STRETCH<br>
+  <p class="ver" id="ver"><b>OIL FILM v0.13</b> CONNECT · CUT · STRETCH<br>
   油のしずくの輪郭だけを、点の輪として計算しています。点を引き寄せる界面張力がしずくを丸くし、輪郭が囲む面積を毎回そろえて油の量を保ちます。しずくの間にはさまった汁の膜が押し返すので、ぶつけると軽く弾き、重なりかけても押し離します。箸が関わらないかぎり、しずく同士は合体しません。近くのしずく同士や画面の縁とは、ゆるく引き合って寄り添います（液面に浮いたもの同士が寄り合う、チェリオス効果と呼ばれる現象の近似）。寄り添ったしずくは弱く押し合い、接したところが少し平らになります。輪郭どうしが油をはさんで近づくと、そこで2つに分かれます。<br>
   指は、汁に立てた箸の先です。先には油の膜が付いています。ゆっくり触れたしずくは箸の膜とつながって一緒に動き、2つ以上つながると箸を通して1つになります。速く動かした箸は膜とつながらず、外から横切るとしずくを切ります。<br>
   この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。スマホでは、傾けたり揺らしたりしたときの力（傾きの重力と、どんぶりの動きに取り残される慣性）を、すべての油に同じ強さでかけています。持ったままの傾きには2.5秒ほどで慣れるので、流れ続けることはありません。器の縁では汁が壁に引き止められるので、縁に近いほど流れを弱めています。壁に触れたしずくは、油が壁を濡らして貼りつき、壁に触れている長さに比例する力で止まります（流す力は油の量に比例するので、小さなしずくほど貼りつきやすい）。それより強く傾けると、壁に沿って滑ります。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
@@ -296,8 +309,17 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
 <script>
 /* =====================================================================
- * OIL FILM contour engine  v0.11
+ * OIL FILM contour engine  v0.12
  *   描画非依存。Node でも単体実行できる（検証用）。単位は画面の px と秒。
+ *
+ *   v0.12 2026-11-10 計算の結果を変えない高速化と、画面の大きさの変更への対応。
+ *                    ・body（傾きの力）を専用の形 Body に。{ x, y } のままだと、最適化が毎刻み外れていた（setBody で入れる）
+ *                    ・Drop の項目を最初にすべて作る（しずくごとに内部の形がばらつかない）。作業用の配列・Map を使い回す
+ *                    ・attract：この刻みで眠ったままのしずく同士は計算しない。いちばん近い点の組は、相手を囲む四角で足切りする
+ *                    ・separateOverlaps：囲む四角は形が変わったしずくだけ取り直す。四角の外の点は内外の判定をしない
+ *                    ・眠ったしずくの輪郭が前の刻みと同じなら、点の整理（remesh・untangle）を省く
+ *                    ・すべて眠って1点も動かなかった刻みの次は、時間だけ進める（idle。箸・強い揺れ・輪郭や画面の変更で解除）
+ *                    ・resize(w, h)：少しの変化は位置をそのまま、大きな変化（回転）は輪郭と油の量を縦横の比で写す
  *
  *   v0.11 2026-11-08 縁：傾き・揺れの力を縁からの距離で弱める（wallLayer・wallFloor）。壁に触れたしずくは、
  *                    流す力の平均 drive が pinS × 触れている長さ ÷ 面積 より弱ければ、しずく全体の動きを kPin で止める。
@@ -339,7 +361,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 (function (root) {
   'use strict';
 
-  var ENGINE_VERSION = '0.11';
+  var ENGINE_VERSION = '0.12';
 
   function mulberry32(seed) {
     var a = seed >>> 0;
@@ -394,7 +416,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     wallFloor: 0.2,  // 縁ぎりぎりで残る流れの割合
     pinS: 40000,     // 壁に貼りつく強さ（px³/s²）。触れている長さ × pinS ÷ 面積 より弱い力では動かない
     kPin: 60,        // 貼りついたしずくの動きを止める速さ（1/s）
-    kSlide: 3        // 滑り出したあと、壁との間の抵抗（1/s）
+    kSlide: 3,       // 滑り出したあと、壁との間の抵抗（1/s）
+    idleSkip: true,  // v0.12 すべてのしずくが眠って何も変わらない刻みは、計算を省く（結果は同じ。false は検証用）
+    resizeKeep: 0.15 // v0.12 画面の大きさの変化がこの割合より小さいときは、しずくの位置を変えない（アドレスバーの出入りなど）
   };
 
   var nextId = 1;
@@ -404,6 +428,13 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     this.vx = new Array(xs.length).fill(0); this.vy = new Array(xs.length).fill(0);
     this.A0 = A0 == null ? polyArea(xs, ys) : A0;
     this.calm = 0;      // 合体直後は、細い橋がすぐ太るまでくびれで切らない（秒）
+    // v0.12 あとから足していた項目を、最初に同じ順で作っておく（どのしずくも同じ形の入れ物になり、読み書きが速い。値は変えない）
+    this.ax = []; this.ay = []; this.m = [];
+    this.dev = 0; this.cn = null; this.drive = 0;
+    this.sleep = false; this.still = 0; this.pinned = false;
+    this.sx = []; this.sy = []; this.nx = []; this.ny = []; this.ev = [];
+    this.qx = null; this.qy = null;   // v0.12 眠ったしずくの「何もすることがなかった輪郭」の控え（同じなら点の整理を省く）
+    this._sx = null; this._sy = null; // 描画用のならした輪郭（描画側が使う）
   }
   function polyArea(x, y) {
     var n = x.length, s = 0;
@@ -429,6 +460,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     return [ty / L, -tx / L];
   }
 
+  /* v0.12 傾き・揺れの力の入れ物。専用の形にして、数は最初から小数として持たせる。
+   * これまでは { x, y } という、箸の行き先（Sim.target）と同じ形のオブジェクトだった。箸の行き先に小数が入った時点で
+   * JavaScript エンジンの中でこの形が作り直され、古い形のまま残った body を読むたびに step の最適化が外れていた
+   * （1刻みの残りがすべて遅い経路で実行される。かき回している間の計算時間の半分以上がこれだった）。計算の結果は変わらない */
+  function Body() { this.x = 0.5; this.y = 0.5; this.x = 0; this.y = 0; }
+
   /* ------------------------------------------------------------------ */
   function World(w, h, params) {
     this.w = w; this.h = h;
@@ -436,7 +473,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     for (k in DEFAULTS) this.p[k] = DEFAULTS[k];
     if (params) for (k in params) this.p[k] = params[k];
     this.drops = [];
-    this.body = { x: 0, y: 0 };  // どんぶりの傾き・揺れで、汁ごと油にかかる力（加速度 px/s²。画面の向き）
+    this.body = new Body();      // どんぶりの傾き・揺れで、汁ごと油にかかる力（加速度 px/s²。画面の向き）。setBody で入れる
     this.tip = { on: false, x: 0, y: 0, vx: 0, vy: 0, r: this.p.tipR, holder: 0, wet: false };
     this.att = {};               // 箸の油の膜とつながっているしずく（id → 1）
     this.tipTime = {};           // 箸に触れている時間（id → s）
@@ -444,6 +481,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     this.time = 0; this.steps = 0;
     this.lostArea = 0;
     this.events = [];            // {t, type:'merge'|'split'}
+    // v0.12 毎刻み作り直していた作業用の入れ物を使い回す
+    this._grid = new Map(); this._cells = []; this._att = [];
+    this._fnx = []; this._fny = [];
+    this.idle = false;           // v0.12 すべて眠って何も変わらない状態（次の刻みは計算を省ける）
+    this.idleW = 0; this.idleH = 0;
+    this.skipped = 0;            // 省いた刻みの数（開発者表示・検証用）
   }
 
   World.prototype.addCircle = function (cx, cy, r, harm) {
@@ -460,6 +503,30 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     return d;
   };
 
+  /* v0.12 画面（器）の大きさが変わったとき。
+   *  ・少しの変化（アドレスバーの出入りなど）：しずくの位置は変えない。縁の外に出た分は、縁がやわらかく押し戻す。
+   *  ・大きな変化（スマホを回したときなど）：器ごと伸び縮みしたとみなして、輪郭を縦横の比で写す。油の量（面積）も同じ比で変わる。
+   *    写しても重なりは生じない。伸びた形は界面張力で丸に戻る。
+   *    （これまでは位置を変えなかったので、縁の外になったしずくが縁に押しつぶされて重なり、まとめて合体していた）
+   *  どちらの場合も、眠っているしずくは起こす（押し戻された形のまま止まらないように） */
+  World.prototype.resize = function (w, h) {
+    var w0 = this.w, h0 = this.h, drops = this.drops, k, i, d;
+    this.w = w; this.h = h;
+    if (!(w0 > 0 && h0 > 0 && w > 0 && h > 0) || (w === w0 && h === h0)) return false;
+    var sx = w / w0, sy = h / h0, keep = this.p.resizeKeep;
+    var scale = Math.abs(sx - 1) > keep || Math.abs(sy - 1) > keep;
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k]; d.sleep = false; d.still = 0; d.qx = null;
+      if (!scale) continue;
+      for (i = 0; i < d.x.length; i++) { d.x[i] *= sx; d.y[i] *= sy; d.vx[i] = 0; d.vy[i] = 0; }
+      d.A0 *= sx * sy; d._sx = null;
+      if (d.calm < 0.4) d.calm = 0.4;       // 丸に戻るあいだは、くびれで切らない
+    }
+    this.idle = false;
+    return scale;
+  };
+  // 傾き・揺れの力を入れる（body を別のオブジェクトに差し替えない。差し替えても動くが、遅くなることがある）
+  World.prototype.setBody = function (x, y) { var b = this.body; b.x = +x || 0; b.y = +y || 0; };
   World.prototype.totalArea = function () { var s = 0; for (var i = 0; i < this.drops.length; i++) s += polyArea(this.drops[i].x, this.drops[i].y); return s; };
   World.prototype.totalA0 = function () { var s = 0; for (var i = 0; i < this.drops.length; i++) s += this.drops[i].A0; return s; };
   World.prototype.nodeCount = function () { var s = 0; for (var i = 0; i < this.drops.length; i++) s += this.drops[i].x.length; return s; };
@@ -467,7 +534,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
   /* ---- 1刻み ---- */
   World.prototype.step = function (dt) {
-    var P = this.p, drops = this.drops, t = this.tip, i, k, d, n;
+    var P = this.p, drops = this.drops, t = this.tip, i, k, d, n, ev0 = this.events.length;
+    // v0.12 すべて眠って何も変わらない状態：この刻みの結果は前の刻みと同じなので、時間だけ進める
+    if (this.stillIdle()) { t.holder = 0; this.att = {}; this.tipTime = {}; this.time += dt; this.steps++; this.skipped++; return; }
+    this.idle = false;
     // 箸の先を含むしずく（そのしずくの油は箸に付く）
     t.holder = 0;
     if (t.on) { var hd = this.dropAt(t.x, t.y); if (hd) { t.holder = hd.id; this.att[hd.id] = 1; } }
@@ -491,7 +561,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     }
 
     // 2) 近い点どうし（空間ハッシュ）：押し返し、接触、くびれの候補
-    var cs = Math.max(P.dRep, P.dPinch), grid = new Map(), K = 1 << 14;
+    var cs = Math.max(P.dRep, P.dPinch), grid = this._grid, cells = this._cells, cellN = 0, K = 1 << 14;
+    grid.clear();
     for (k = 0; k < drops.length; k++) {
       d = drops[k];
       // 変形の速さ（平均からの速度のずれの二乗平均）→ くびれが切れる太さ
@@ -503,7 +574,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       if (!d.cn || d.cn.length !== nn) d.cn = new Uint8Array(nn); else d.cn.fill(0);   // 他のしずくと接している点
       for (i = 0; i < d.x.length; i++) {
         var key = Math.floor(d.x[i] / cs) + 4096 + (Math.floor(d.y[i] / cs) + 4096) * K;
-        var cell = grid.get(key); if (!cell) { cell = []; grid.set(key, cell); }
+        var cell = grid.get(key);
+        if (!cell) { cell = cells[cellN] || (cells[cellN] = []); cellN++; cell.length = 0; grid.set(key, cell); }
         cell.push(k, i);
       }
     }
@@ -528,8 +600,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
             if (k2 === k) {
               var sep = Math.abs(i - j); sep = Math.min(sep, n - sep);
               if (sep < 5) continue;
-              var nm = normalAt(d, i);
-              var oilBetween = dx * nm[0] + dy * nm[1] < 0;   // j が i の内側にある＝間は油
+              // 点 i の外向きの法線（normalAt と同じ計算。配列を作らない）
+              var na0 = i === 0 ? n - 1 : i - 1, nb0 = i === n - 1 ? 0 : i + 1;
+              var ntx = d.x[nb0] - d.x[na0], nty = d.y[nb0] - d.y[na0], nL = Math.hypot(ntx, nty) || 1;
+              var oilBetween = dx * (nty / nL) + dy * (-ntx / nL) < 0;   // j が i の内側にある＝間は油
               if (oilBetween) {
                 if (d.calm <= 0 && dist < P.dPinch) pinches.push({ id: d.id, i: i, j: j, dist: dist, rel: dist / P.dPinch });
                 continue;
@@ -597,7 +671,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       // 眠っているしずく（止まって落ち着いたもの）は動かさない。箸が近づくか、動いているしずくに押されると起きる
       if (d.sleep) {
         if (bodyOn) d.sleep = false;
-        if (t.on) { var sc0 = dropCenter(d), rr0 = Math.sqrt(d.A0 / Math.PI) * 1.4 + t.r + 24; if ((sc0[0] - t.x) * (sc0[0] - t.x) + (sc0[1] - t.y) * (sc0[1] - t.y) < rr0 * rr0) d.sleep = false; }
+        if (t.on && tipNear(d, t)) d.sleep = false;
         if (d.sleep) { for (i = 0; i < n; i++) { d.vx[i] = 0; d.vy[i] = 0; } continue; }
       }
       // 点の質量は受け持つ輪郭の長さ（張力の和が 0 になる重み）。平均速度もこの重みで
@@ -696,7 +770,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
         ev[2 * i] += (d.vx[i] - ev[2 * i]) * ka; ev[2 * i + 1] += (d.vy[i] - ev[2 * i + 1]) * ka;
         var e2 = ev[2 * i] * ev[2 * i] + ev[2 * i + 1] * ev[2 * i + 1]; if (e2 > emax) emax = e2;
       }
-      var nearTip = t.on && (att[d.id] || (function () { var c0 = dropCenter(d), r0 = Math.sqrt(d.A0 / Math.PI) * 1.4 + t.r + 24; return (c0[0] - t.x) * (c0[0] - t.x) + (c0[1] - t.y) * (c0[1] - t.y) < r0 * r0; })());
+      var nearTip = t.on && (att[d.id] || tipNear(d, t));
       for (i = 0; i < n; i++) { d.x[i] += dt * d.vx[i]; d.y[i] += dt * d.vy[i]; }
       // 全体として動かす小さなしずくも、形はゆっくり丸に戻す（すき間に押し込まれた三角形のまま固まらないように）
       if (rigid && P.tRound > 0) {
@@ -792,15 +866,35 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     this.contacts = nextC;
 
     // 7) 点の間隔をそろえ、ねじれた輪郭をほどく
-    for (k = 0; k < drops.length; k++) { this.remesh(drops[k]); untangle(drops[k]); }
+    // v0.12 眠ったしずくの輪郭が、前に「何も変えるところがなかった輪郭」と同じなら、整理は省く（同じ結果になるため）
+    var allQuiet = true;
+    for (k = 0; k < drops.length; k++) {
+      d = drops[k];
+      if (d.sleep && sameAsQuiet(d)) continue;
+      allQuiet = false;
+      var ch = this.remesh(d); if (untangle(d)) ch = true;
+      if (d.sleep && !ch) keepQuiet(d); else d.qx = null;
+    }
 
     for (k = 0; k < drops.length; k++) if (drops[k].calm > 0) drops[k].calm -= dt;
 
     // 8) 小さすぎる粒
     for (k = drops.length - 1; k >= 0; k--) {
-      if (drops[k].A0 < P.minArea || drops[k].x.length < 6) { this.lostArea += drops[k].A0; drops.splice(k, 1); }
+      if (drops[k].A0 < P.minArea || drops[k].x.length < 6) { this.lostArea += drops[k].A0; drops.splice(k, 1); allQuiet = false; }
     }
     this.time += dt; this.steps++;
+    // v0.12 すべてのしずくが眠ったまま、輪郭も1点も動かなかった刻み：次の刻みも（箸や強い揺れが来るまで）同じ結果になる
+    var anyC = false; for (pk2 in nextC) { anyC = true; break; }
+    this.idle = allQuiet && !t.on && !bodyOn && !P.pressMerge && !anyC && !didSplit && this.events.length === ev0;
+    this.idleW = this.w; this.idleH = this.h;
+  };
+  // v0.12 何も変わらない状態が続いているか（外から輪郭や画面の大きさを変えられていないことも確かめる）
+  World.prototype.stillIdle = function () {
+    if (!this.idle || this.tip.on || this.w !== this.idleW || this.h !== this.idleH || !this.p.idleSkip) return false;
+    var P = this.p, bx = this.body.x || 0, by = this.body.y || 0, drops = this.drops;
+    if (bx * bx + by * by > P.bodyWake * P.bodyWake) return false;
+    for (var k = 0; k < drops.length; k++) if (!drops[k].sleep || !sameAsQuiet(drops[k])) return false;
+    return true;
   };
 
   // 箸の先がしずくの中にあるときは、輪郭が囲む面積 = 油 + 箸の断面
@@ -810,14 +904,18 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       var A = polyArea(d.x, d.y), L = perimeter(d.x, d.y);
       var delta = (target - A) / (L || 1);
       if (Math.abs(delta) < 1e-6) return;
-      var nx = new Array(n), ny = new Array(n);
-      for (var i = 0; i < n; i++) { var nm = normalAt(d, i); nx[i] = nm[0]; ny[i] = nm[1]; }
-      for (var j = 0; j < n; j++) { d.x[j] += delta * nx[j]; d.y[j] += delta * ny[j]; }
+      var nx = this._fnx, ny = this._fny, X = d.x, Y = d.y;   // v0.12 使い回す（normalAt と同じ計算）
+      for (var i = 0; i < n; i++) {
+        var a = i === 0 ? n - 1 : i - 1, b = i === n - 1 ? 0 : i + 1;
+        var tx = X[b] - X[a], ty = Y[b] - Y[a], Ln = Math.hypot(tx, ty) || 1;
+        nx[i] = ty / Ln; ny[i] = -tx / Ln;
+      }
+      for (var j = 0; j < n; j++) { X[j] += delta * nx[j]; Y[j] += delta * ny[j]; }
     }
   };
 
   World.prototype.remesh = function (d) {
-    var P = this.p, i, n;
+    var P = this.p, i, n, changed = false;
     // 長い辺を割る
     for (i = 0; i < d.x.length; i++) {
       n = d.x.length; var b = (i + 1) % n;
@@ -825,6 +923,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       if (L > P.hMax) {
         d.x.splice(i + 1, 0, 0.5 * (d.x[i] + d.x[b])); d.y.splice(i + 1, 0, 0.5 * (d.y[i] + d.y[b]));
         d.vx.splice(i + 1, 0, 0.5 * (d.vx[i] + d.vx[b])); d.vy.splice(i + 1, 0, 0.5 * (d.vy[i] + d.vy[b]));
+        changed = true;
         if (b === 0) { /* 先頭をまたぐときも挿入位置は末尾でよい */ }
       }
     }
@@ -836,9 +935,11 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
         d.x[i] = 0.5 * (d.x[i] + d.x[c]); d.y[i] = 0.5 * (d.y[i] + d.y[c]);
         d.vx[i] = 0.5 * (d.vx[i] + d.vx[c]); d.vy[i] = 0.5 * (d.vy[i] + d.vy[c]);
         d.x.splice(c, 1); d.y.splice(c, 1); d.vx.splice(c, 1); d.vy.splice(c, 1);
+        changed = true;
         if (c < i) i--;
       }
     }
+    return changed;
   };
 
   // 縦横比（慣性モーメントの主軸の比の平方根）
@@ -914,28 +1015,45 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
   // 力は2つのしずくに逆向きで等しく（運動量を保つ）、しずく全体に一様に加える
   function smooth01(e0, e1, x) { var u = clamp((x - e0) / (e1 - e0), 0, 1); return u * u * (3 - 2 * u); }
   World.prototype.attract = function () {
-    var P = this.p, drops = this.drops, n = drops.length, c = [], k, j, i, rng = P.dRep + 5 * P.lAtt;
+    var P = this.p, drops = this.drops, n = drops.length, c = this._att, k, j, i, rng = P.dRep + 5 * P.lAtt;
+    // v0.12 結果を変えない省略：
+    //  ・この刻みで眠ったままのしずく（箸も揺れも届かない）は力を使わないので、眠ったもの同士の組と、その縁との引き合いは計算しない
+    //  ・いちばん近い点の組を探すとき、相手を囲む四角までの距離が今の最小より遠い点は調べない
+    var t = this.tip, bx0 = this.body.x || 0, by0 = this.body.y || 0, bodyOn = bx0 * bx0 + by0 * by0 > P.bodyWake * P.bodyWake;
+    var rng2 = rng * rng * 1.000001;
     for (k = 0; k < n; k++) {
       var d = drops[k], m = d.x.length, x = 0, y = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
       for (i = 0; i < m; i++) { var px = d.x[i], py = d.y[i]; x += px; y += py; if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; }
       var msum = 0; for (i = 0; i < m; i++) msum += d.m[i];
-      c.push({ cx: x / m, cy: y / m, bb: [x0, y0, x1, y1], fx: 0, fy: 0, mass: d.A0, msum: msum });
+      var e = c[k] || (c[k] = { cx: 0, cy: 0, x0: 0, y0: 0, x1: 0, y1: 0, fx: 0, fy: 0, msum: 0, idle: false });
+      e.cx = x / m; e.cy = y / m; e.x0 = x0; e.y0 = y0; e.x1 = x1; e.y1 = y1; e.fx = 0; e.fy = 0; e.msum = msum;
+      e.idle = !!d.sleep && !bodyOn && !(t.on && tipNear(d, t));
     }
     for (k = 0; k < n; k++) {
-      var a = c[k], A = drops[k];
-      // 画面の縁：いちばん近い点と縁のすき間
-      var walls = [[a.bb[0], -1, 0], [this.w - a.bb[2], 1, 0], [a.bb[1], 0, -1], [this.h - a.bb[3], 0, 1]];
-      for (i = 0; i < 4; i++) {
-        var g = walls[i][0];
-        if (g < rng) { var fw = P.gAtt * Math.exp(-g / P.lAtt) * smooth01(P.dWall, P.dWall + 3, g) * a.msum; a.fx += fw * walls[i][1]; a.fy += fw * walls[i][2]; }
+      var a = c[k], A = drops[k], g, fw;
+      if (!a.idle) {
+        // 画面の縁：いちばん近い点と縁のすき間（左・右・上・下の順）
+        g = a.x0; if (g < rng) { fw = P.gAtt * Math.exp(-g / P.lAtt) * smooth01(P.dWall, P.dWall + 3, g) * a.msum; a.fx += fw * -1; a.fy += fw * 0; }
+        g = this.w - a.x1; if (g < rng) { fw = P.gAtt * Math.exp(-g / P.lAtt) * smooth01(P.dWall, P.dWall + 3, g) * a.msum; a.fx += fw * 1; a.fy += fw * 0; }
+        g = a.y0; if (g < rng) { fw = P.gAtt * Math.exp(-g / P.lAtt) * smooth01(P.dWall, P.dWall + 3, g) * a.msum; a.fx += fw * 0; a.fy += fw * -1; }
+        g = this.h - a.y1; if (g < rng) { fw = P.gAtt * Math.exp(-g / P.lAtt) * smooth01(P.dWall, P.dWall + 3, g) * a.msum; a.fx += fw * 0; a.fy += fw * 1; }
       }
+      var AX = A.x, AY = A.y, nA = AX.length;
       for (j = k + 1; j < n; j++) {
         var b = c[j];
-        if (a.bb[0] - rng > b.bb[2] || b.bb[0] - rng > a.bb[2] || a.bb[1] - rng > b.bb[3] || b.bb[1] - rng > a.bb[3]) continue;
-        var B = drops[j], best = 1e18, bi = 0, bj = 0;
-        for (var p = 0; p < A.x.length; p++) for (var q = 0; q < B.x.length; q++) {
-          var dx = B.x[q] - A.x[p], dy = B.y[q] - A.y[p], dd = dx * dx + dy * dy;
-          if (dd < best) { best = dd; bi = p; bj = q; }
+        if (a.idle && b.idle) continue;
+        if (a.x0 - rng > b.x1 || b.x0 - rng > a.x1 || a.y0 - rng > b.y1 || b.y0 - rng > a.y1) continue;
+        var B = drops[j], BX = B.x, BY = B.y, nB = BX.length, best = 1e18;
+        for (var p = 0; p < nA; p++) {
+          var ppx = AX[p], ppy = AY[p];
+          var ex = b.x0 - ppx; if (ex < 0) { ex = ppx - b.x1; if (ex < 0) ex = 0; }
+          var ey = b.y0 - ppy; if (ey < 0) { ey = ppy - b.y1; if (ey < 0) ey = 0; }
+          var lb = ex * ex + ey * ey;
+          if (lb >= best || lb > rng2) continue;
+          for (var q = 0; q < nB; q++) {
+            var dx = BX[q] - ppx, dy = BY[q] - ppy, dd = dx * dx + dy * dy;
+            if (dd < best) best = dd;
+          }
         }
         var gap = Math.sqrt(best);
         if (gap > rng) continue;
@@ -947,29 +1065,38 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       }
     }
     // 力 ÷ 面積 を、しずくの全部の点に加速度として加える
-    for (k = 0; k < n; k++) { var dk = drops[k], axk = c[k].fx / c[k].msum, ayk = c[k].fy / c[k].msum; for (i = 0; i < dk.x.length; i++) { dk.ax[i] += axk; dk.ay[i] += ayk; } }
+    for (k = 0; k < n; k++) {
+      if (c[k].idle) continue;
+      var dk = drops[k], axk = c[k].fx / c[k].msum, ayk = c[k].fy / c[k].msum, DAX = dk.ax, DAY = dk.ay, nk = dk.x.length;
+      for (i = 0; i < nk; i++) { DAX[i] += axk; DAY[i] += ayk; }
+    }
   };
 
   // 重なり：相手の内側に入った点を、相手の輪郭の外へ押し出す
   World.prototype.separateOverlaps = function () {
-    var drops = this.drops;
-    for (var a = 0; a < drops.length; a++) {
-      var A = drops[a], ba = bbox(A);
-      for (var b = a + 1; b < drops.length; b++) {
-        var B = drops[b], bb = bbox(B);
+    // v0.12 囲む四角は、形が変わったしずくだけ取り直す（毎回すべての組で取り直していた。結果は同じ）
+    var drops = this.drops, nD = drops.length, bbs = new Array(nD), k;
+    for (k = 0; k < nD; k++) bbs[k] = bbox(drops[k]);
+    for (var a = 0; a < nD; a++) {
+      var A = drops[a], ba = bbs[a];
+      for (var b = a + 1; b < nD; b++) {
+        var B = drops[b], bb = bbs[b];
         if (ba[2] < bb[0] || bb[2] < ba[0] || ba[3] < bb[1] || bb[3] < ba[1]) continue;
-        var inA = pushOut(A, B), inB = pushOut(B, A);
+        var inA = pushOut(A, B, bb); if (inA) bbs[a] = bbox(A);
+        var inB = pushOut(B, A, bbs[a]); if (inB) bbs[b] = bbox(B);
         // ほとんど丸ごと入り込んだ（めったにない）ときだけは1つにまとめる
         if (inA > 0.6 * A.x.length || inB > 0.6 * B.x.length) { this.unite(a, b); return this.separateOverlaps(); }
-        if (inA || inB) { this.fixArea(A, 0); this.fixArea(B, 0); }
+        if (inA || inB) { this.fixArea(A, 0); this.fixArea(B, 0); bbs[a] = bbox(A); bbs[b] = bbox(B); }
       }
     }
   };
   var SEP_PAD = 0.3;
-  function pushOut(A, B) {
+  function pushOut(A, B, bb) {   // bb：B を囲む四角（その外の点は B の内側ではない）
     var cnt = 0;
     for (var i = 0; i < A.x.length; i++) {
-      if (!inside(B, A.x[i], A.y[i])) continue;
+      var qx0 = A.x[i], qy0 = A.y[i];
+      if (qy0 < bb[1] || qy0 > bb[3] || qx0 < bb[0] - 1e-6 || qx0 > bb[2] + 1e-6) continue;
+      if (!inside(B, qx0, qy0)) continue;
       cnt++; A.sleep = false;
       var q = nearestOn(B, A.x[i], A.y[i]);
       // 相手の輪郭のすぐ外へ（余分に押し出すと、押し合いと交互に効いて震える）
@@ -995,6 +1122,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     return d1 * d2 < 0 && d3 * d4 < 0;
   }
   function untangle(d) {
+    var changed = false;
     for (var pass = 0; pass < 12; pass++) {
       var n = d.x.length, X = d.x, Y = d.y, found = false;
       for (var a = 0; a < n && !found; a++) {
@@ -1009,13 +1137,26 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
               var tx = X[i]; X[i] = X[j]; X[j] = tx; tx = Y[i]; Y[i] = Y[j]; Y[j] = tx;
               tx = d.vx[i]; d.vx[i] = d.vx[j]; d.vx[j] = tx; tx = d.vy[i]; d.vy[i] = d.vy[j]; d.vy[j] = tx;
             }
-            found = true; break;
+            found = true; changed = true; break;
           }
         }
       }
       if (!found) break;
     }
-    if (polyArea(d.x, d.y) < 0) { d.x.reverse(); d.y.reverse(); d.vx.reverse(); d.vy.reverse(); }
+    if (polyArea(d.x, d.y) < 0) { d.x.reverse(); d.y.reverse(); d.vx.reverse(); d.vy.reverse(); changed = true; }
+    return changed;
+  }
+  // v0.12 眠ったしずくの輪郭の控え：点の整理で何も変わらなかった輪郭を覚えておき、次も同じ輪郭なら整理を省く
+  function sameAsQuiet(d) {
+    var qx = d.qx, qy = d.qy, X = d.x, Y = d.y, n = X.length;
+    if (!qx || qx.length !== n) return false;
+    for (var i = 0; i < n; i++) if (qx[i] !== X[i] || qy[i] !== Y[i]) return false;
+    return true;
+  }
+  function keepQuiet(d) {
+    var n = d.x.length;
+    if (!d.qx || d.qx.length !== n) { d.qx = new Float64Array(n); d.qy = new Float64Array(n); }
+    for (var i = 0; i < n; i++) { d.qx[i] = d.x[i]; d.qy[i] = d.y[i]; }
   }
 
   // 重なり：一方の点がもう一方の内側にあれば、2つを1つの輪郭にまとめ直す
@@ -1032,6 +1173,14 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       }
     }
   };
+  // 箸がしずくの近くにあるか（眠ったしずくが起きる範囲）
+  function tipNear(d, t) {
+    var x = 0, y = 0, n = d.x.length;
+    for (var i = 0; i < n; i++) { x += d.x[i]; y += d.y[i]; }
+    x = x / n - t.x; y = y / n - t.y;
+    var r0 = Math.sqrt(d.A0 / Math.PI) * 1.4 + t.r + 24;
+    return x * x + y * y < r0 * r0;
+  }
   function roundness(d) { var n = d.x.length, L = 0; for (var i = 0; i < n; i++) { var j = (i + 1) % n; L += Math.hypot(d.x[j] - d.x[i], d.y[j] - d.y[i]); } return L / (2 * Math.sqrt(Math.PI * d.A0)); }
   function dropCenter(d) { var x = 0, y = 0, n = d.x.length; for (var i = 0; i < n; i++) { x += d.x[i]; y += d.y[i]; } return [x / n, y / n]; }
   function bbox(d) {
@@ -1237,7 +1386,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
 </script>
 <script>
-/* OIL FILM 検証 v0.11（v0.11 で B20 縁は流れにくい・B21 強く傾けると滑るを追加。v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
+/* OIL FILM 検証 v0.12（v0.12 で B22 画面を回す・B23 画面が少し縮む・B24 止まった液面は計算を省くを追加。傾きの力は setBody で入れる。v0.11 で B20 縁は流れにくい・B21 強く傾けると滑るを追加。v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
 (function (root) {
   'use strict';
   var C = root.OilContour || (typeof require !== 'undefined' ? require('./contour.js') : null);
@@ -1360,14 +1509,14 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       var s = new C.Sim(W, H); C.scatter(s.world, 5); run(s, 2);
       var n0 = s.world.drops.length, cy = function (d) { return d.y.reduce(function (a, b) { return a + b; }, 0) / d.y.length; };
       var y0 = s.world.drops.map(cy), A0 = s.world.totalA0();
-      s.world.body = { x: 0, y: 250 }; run(s, 3); s.world.body = { x: 0, y: 0 }; run(s, 1);
+      s.world.setBody(0, 250); run(s, 3); s.world.setBody(0, 0); run(s, 1);
       var down = 0; s.world.drops.forEach(function (d, k) { if (cy(d) > y0[k] + 5 || Math.max.apply(null, d.y) > H - 4) down++; });
       return { ok: s.world.drops.length === n0 && down === n0 && Math.abs(s.world.totalA0() + s.world.lostArea - A0) < 1e-6 && aerr(s) < 1e-3,
         detail: 'しずくの数 ' + n0 + ' → ' + s.world.drops.length + '、下へ動いた・下の縁に着いた ' + down + '/' + n0 + '、面積の誤差 ' + aerr(s).toExponential(1) + '（流れて下に寄る。合体しない）' };
     } },
     { id: 'B19', name: '止まったしずくも、揺らすと動き出す', fn: function () {
       var s = mk([[195, 400, 40]]); run(s, 3); var slept = !!s.world.drops[0].sleep;
-      var x0 = s.world.drops[0].x[0]; s.world.body = { x: 300, y: 0 }; run(s, 0.3); s.world.body = { x: 0, y: 0 };
+      var x0 = s.world.drops[0].x[0]; s.world.setBody(300, 0); run(s, 0.3); s.world.setBody(0, 0);
       var dx = s.world.drops[0].x[0] - x0;
       return { ok: slept && dx > 3, detail: '止まっていた ' + (slept ? 'はい' : 'いいえ') + '、0.3秒の揺れで右へ ' + dx.toFixed(1) + ' px' };
     } },
@@ -1375,16 +1524,46 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       var s = mk([[42, 300, 40], [195, 300, 40]]); run(s, 3);
       var cy = function (d) { return d.y.reduce(function (a, b) { return a + b; }, 0) / d.y.length; };
       var D = s.world.drops, e0 = cy(D[0]), c0 = cy(D[1]), touch = Math.min.apply(null, D[0].x);
-      s.world.body = { x: 0, y: 200 }; run(s, 2); s.world.body = { x: 0, y: 0 };
+      s.world.setBody(0, 200); run(s, 2); s.world.setBody(0, 0);
       var de = cy(D[0]) - e0, dc = cy(D[1]) - c0;
       return { ok: touch < 4 && dc > 40 && de < 0.25 * dc, detail: '縁に着いた（すき間 ' + touch.toFixed(1) + ' px）しずくは ' + de.toFixed(1) + ' px、真ん中のしずくは ' + dc.toFixed(1) + ' px 流れた（縁は貼りついて動きにくい）' };
     } },
     { id: 'B21', name: '強く傾けると、縁のしずくも壁に沿って滑る（600 px/s²・2秒）', fn: function () {
       var s = mk([[42, 300, 40]]); run(s, 3);
       var d = s.world.drops[0], cy = function () { return d.y.reduce(function (a, b) { return a + b; }, 0) / d.y.length; }, y0 = cy();
-      s.world.body = { x: 0, y: 600 }; run(s, 2); s.world.body = { x: 0, y: 0 };
+      s.world.setBody(0, 600); run(s, 2); s.world.setBody(0, 0);
       var dy = cy() - y0, gap = Math.min.apply(null, d.x);
       return { ok: s.world.drops.length === 1 && dy > 30 && gap < 6, detail: '壁に沿って ' + dy.toFixed(1) + ' px 滑った。壁とのすき間 ' + gap.toFixed(1) + ' px（離れずに滑る）' };
+    } },
+    { id: 'B22', name: '画面を回す（390×800 → 800×390）', fn: function () {
+      var s = new C.Sim(W, H); C.scatter(s.world, 5); run(s, 10);
+      var w = s.world, n0 = w.drops.length, A0 = w.totalA0(), e0 = w.events.length;
+      w.resize(800, 390); run(s, 5);
+      var out = 0, rd = 0; w.drops.forEach(function (d) {
+        var L = 0, i; for (i = 0; i < d.x.length; i++) { var j = (i + 1) % d.x.length; L += Math.hypot(d.x[j] - d.x[i], d.y[j] - d.y[i]); if (d.x[i] < -1 || d.x[i] > 801 || d.y[i] < -1 || d.y[i] > 391) out++; }
+        rd = Math.max(rd, L / (2 * Math.sqrt(Math.PI * d.A0))); });
+      return { ok: w.drops.length === n0 && w.events.length === e0 && out === 0 && w.lostArea === 0 && Math.abs(w.totalA0() - A0 * (800 * 390) / (W * H)) < 1e-6 * A0 && rd < 1.1,
+        detail: 'しずくの数 ' + n0 + ' → ' + w.drops.length + '、合体・分裂 ' + (w.events.length - e0) + ' 回、枠の外の点 ' + out + '、5秒後のいちばんつぶれた形は円の ' + rd.toFixed(3) + ' 倍の周長（並びを保ったまま、丸に戻る）' };
+    } },
+    { id: 'B23', name: '画面が少し縮む（高さ 800 → 744。アドレスバー）', fn: function () {
+      var s = new C.Sim(W, H); C.scatter(s.world, 5); run(s, 10);
+      var w = s.world, n0 = w.drops.length, A0 = w.totalA0(), e0 = w.events.length, c0 = w.drops.map(function (d) { return d.x.reduce(function (a, b) { return a + b; }, 0) / d.x.length; });
+      w.resize(W, 744); run(s, 5);
+      var mv = 0, out = 0; w.drops.forEach(function (d, k) { mv = Math.max(mv, Math.abs(d.x.reduce(function (a, b) { return a + b; }, 0) / d.x.length - c0[k])); for (var i = 0; i < d.y.length; i++) if (d.y[i] > 744.5) out++; });
+      return { ok: w.drops.length === n0 && w.events.length === e0 && out === 0 && Math.abs(w.totalA0() - A0) < 1e-9,
+        detail: 'しずくの数 ' + n0 + ' → ' + w.drops.length + '、油の量は同じ、枠の外の点 ' + out + '、横へのずれの最大 ' + mv.toFixed(1) + ' px（並びはそのまま。下にはみ出た分だけ押し戻す）' };
+    } },
+    { id: 'B24', name: '止まった液面は計算を省く（省いても結果は同じ）', fn: function () {
+      function go(skip) {
+        var s = new C.Sim(W, H, { idleSkip: skip }); C.scatter(s.world, 3); run(s, 40);
+        var sk = s.world.skipped; trace(s, [[60, 200], [200, 420], [330, 520]], 120, 0.2); run(s, 3);
+        return { s: s, sk: sk };
+      }
+      var a = go(true), b = go(false), A = a.s.world.drops, B = b.s.world.drops, d = 0;
+      if (A.length !== B.length) d = Infinity;
+      else for (var k = 0; k < A.length; k++) { if (A[k].x.length !== B[k].x.length) { d = Infinity; break; } for (var i = 0; i < A[k].x.length; i++) d = Math.max(d, Math.abs(A[k].x[i] - B[k].x[i]), Math.abs(A[k].y[i] - B[k].y[i])); }
+      var tot = a.s.world.steps;
+      return { ok: d === 0 && a.sk > 1000 && b.sk === 0, detail: '放置40秒で省いた刻み ' + a.sk + '（省かない設定では ' + b.sk + '）。そのあと箸でなぞった結果の差の最大 ' + d + ' px' };
     } },
     { id: 'B10', name: '同じ初期状態・同じ軌跡の再生', fn: function () {
       var a = mk(PAIR), b = mk(PAIR), d = 0;
@@ -1426,13 +1605,19 @@ if (!ctx) { document.body.insertAdjacentHTML('beforeend', '<div class="fatal">�
 
 let VW = 0, VH = 0, DPR = 1, sim = null, seed = (Math.random() * 1e9) >>> 0;
 let paused = false, showNodes = false, bgCv = null, A00 = 0;
+// v0.12 液面が止まっているあいだは、描き直しを休む（電池の節約）。動きが止まってからも DRAW_HOLD コマは描いて、ならした輪郭を落ち着かせる
+const DRAW_HOLD = 60;
+let drawHold = DRAW_HOLD, buildNo = 0, drawn = 0;
+function wakeDraw() { drawHold = DRAW_HOLD; }
 
 // ---------------- 配置 ----------------
 function layout() {
   VW = window.innerWidth; VH = window.innerHeight; DPR = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
   buildBackground();
-  if (sim) { sim.world.w = VW; sim.world.h = VH; }
+  // v0.12 少しの変化は位置をそのまま、大きな変化（回転など）は器ごと伸び縮みしたとして写す（エンジンの resize）
+  if (sim) { if (sim.world.resize(VW, VH)) A00 = sim.world.totalA0() + sim.world.lostArea; }
+  wakeDraw();
 }
 function build(keepSeed, saved) {
   if (!keepSeed) seed = (Math.random() * 1e9) >>> 0;
@@ -1441,6 +1626,7 @@ function build(keepSeed, saved) {
   else if (opt.scene === 'practice') C.practice(sim.world); else C.scatter(sim.world, seed);
   A00 = sim.world.totalA0();
   evSeen = 0; setCount(sim.world.drops.length, false);
+  buildNo++; wakeDraw();
 }
 
 // ---------------- 背景（墨色の液面。起動時に1回だけ作る） ----------------
@@ -1543,7 +1729,7 @@ cv.addEventListener('pointerdown', (e) => {
   if (pid !== null || paused) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   pid = e.pointerId; try { cv.setPointerCapture(pid); } catch (err) {}
-  hideGuide();
+  hideGuide(); wakeDraw();
   sim.down(e.clientX, e.clientY);
   e.preventDefault();
 });
@@ -1565,6 +1751,7 @@ function setPaused(v) {
   $('#btnPause').setAttribute('aria-pressed', String(v)); $('#btnPause').setAttribute('aria-label', v ? '再開' : '一時停止');
   $('#pauseIcon').innerHTML = v ? '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>' : '<path d="M9 6v12M15 6v12"/>';
   if (v && pid !== null) { sim.up(); pid = null; }
+  wakeDraw();
 }
 $('#btnPause').addEventListener('click', () => setPaused(!paused));
 const sheet = $('#sheet'), backdrop = $('#backdrop');
@@ -1589,9 +1776,9 @@ function segInit(id, cur, onPick) {
   el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mark(b.dataset.v); onPick(b.dataset.v); saveOpt(); });
 }
 segInit('#optScene', opt.scene, (v) => { opt.scene = v; build(false); openSheet(false); });
-segInit('#optColor', opt.color, (v) => { opt.color = v; });
+segInit('#optColor', opt.color, (v) => { opt.color = v; wakeDraw(); });
 const optRing = $('#optRing'); optRing.checked = opt.ring;
-optRing.addEventListener('change', () => { opt.ring = optRing.checked; saveOpt(); });
+optRing.addEventListener('change', () => { opt.ring = optRing.checked; saveOpt(); wakeDraw(); });
 $('#btnScatter').addEventListener('click', () => { build(false); openSheet(false); });
 $('#btnRestart').addEventListener('click', () => { build(true); openSheet(false); });
 $('#btnGuide').addEventListener('click', () => { openSheet(false); showGuide(); });
@@ -1599,7 +1786,7 @@ let verTaps = 0, verTimer = 0;
 $('#ver').addEventListener('click', () => { verTaps++; clearTimeout(verTimer); verTimer = setTimeout(() => { verTaps = 0; }, 1500); if (verTaps >= 5) { verTaps = 0; $('#devSec').hidden = false; } });
 $('#btnDevHide').addEventListener('click', () => { $('#devSec').hidden = true; });
 $('#optDebug').addEventListener('change', (e) => { $('#debug').hidden = !e.target.checked; });
-$('#optRaw').addEventListener('change', (e) => { showNodes = e.target.checked; });
+$('#optRaw').addEventListener('change', (e) => { showNodes = e.target.checked; wakeDraw(); });
 let testsDone = false;
 $('#testBox').addEventListener('toggle', () => {
   if (!$('#testBox').open || testsDone) return; testsDone = true;
@@ -1655,7 +1842,8 @@ function updDbg(ms) {
     ['はじめとの差', (A0 + w.lostArea - A00).toFixed(3) + ' px²'],
     ['刻み', sim.lastSub],
     ['計算', ms.toFixed(2) + ' ms/コマ'],
-    ['傾き', isPhone ? (tilt.on ? (tilt.raw ? Math.hypot(w.body.x, w.body.y).toFixed(0) + ' px/s²' : 'センサー待ち') : '切') : 'スマホのみ'],
+    ['液面', w.idle ? '止まっている（計算と描画を休止）' : '動いている'],
+    ['傾き', isPhone ? (tilt.on ? (tilt.raw ? Math.hypot(w.body.x, w.body.y).toFixed(0) + ' px/s²' : (tilt.why ? '使えない：' + tilt.why : 'センサー待ち')) : '切') : 'スマホのみ'],
     ['箸', w.tip.on ? (w.tip.holder ? 'しずくの中' : 'しずくの外') + '・つながり ' + Object.keys(w.att).length : '—'],
     ['最後の操作', g ? KIND[g.kind] || g.kind : '—'],
     ['経路', g ? g.seq : '—'],
@@ -1669,27 +1857,42 @@ function updDbg(ms) {
 //   静かに傾けると重力の傾き成分（低い側へ流れる）、揺らすとどんぶりの動きと逆向きの慣性（汁が取り残される）。
 // 手に持った姿勢の傾きでずっと流れ続けないよう、基準の姿勢を TILT.tau 秒かけてゆっくり追いかけ、その差だけを使う。
 const isPhone = window.matchMedia('(pointer: coarse)').matches && 'DeviceMotionEvent' in window;
-const needPerm = isPhone && typeof DeviceMotionEvent.requestPermission === 'function';   // iPhone・iPad
+const needPerm = isPhone && typeof DeviceMotionEvent.requestPermission === 'function';   // iPhone・iPad。新しい Chrome（Android）にもある（v0.13 で確認）
 const TILT = { gain: 60, tau: 2.5, smooth: 0.04, dead: 0.25, max: 900 };   // gain：1 m/s² あたりの px/s²
-const tilt = { on: false, granted: !needPerm, raw: null, f: [0, 0], base: null, ang: null };
-function onMotion(e) { const g = e.accelerationIncludingGravity; if (g && g.x != null && g.y != null) tilt.raw = [g.x, g.y]; }
+const tilt = { on: false, granted: !needPerm, raw: null, f: [0, 0], base: null, ang: null, why: '', timer: 0 };
+function onMotion(e) { const g = e.accelerationIncludingGravity; if (g && g.x != null && g.y != null) { if (!tilt.raw && tilt.why) tiltNote(''); tilt.raw = [g.x, g.y]; } }
+// v0.13 センサーが使えないとき、理由を設定の「傾けて揺らす」の下と開発者表示に出す（これまでは何も出ず、動かないだけだった）
+function tiltNote(msg) { tilt.why = msg || ''; const el = $('#tiltNote'); if (el) { el.textContent = msg ? '⚠ ' + msg : ''; el.hidden = !msg; } }
+// 使えない理由を調べて表示する。denied：ブラウザが「許可しない」と答えたとき
+function explainTilt(denied) {
+  if (!window.isSecureContext) return tiltNote('この開き方（保存したファイルを開いた場合など）では、ブラウザがセンサーを渡しません。https:// で始まるページとして開くと使えます。');
+  const fp = document.featurePolicy || document.permissionsPolicy;
+  try { if (fp && fp.allowsFeature && !fp.allowsFeature('accelerometer')) return tiltNote('この画面（ほかのアプリの中の表示など）ではセンサーが止められています。Chrome で直接開いてください。'); } catch (e) {}
+  const blocked = 'ブラウザの設定で、このサイトの「モーション センサー」がブロックされています。Chrome はアドレスバーの左のアイコン →「権限」（または 設定 → サイトの設定 → モーション センサー）で許可してから、このスイッチを入れ直してください。';
+  const late = () => tiltNote(denied ? blocked : 'センサーの値が届きません。ブラウザの「サイトの設定」で「モーション センサー」が許可されているか確かめてください。');
+  try {
+    navigator.permissions.query({ name: 'accelerometer' }).then((r) => { if (tilt.raw) return; if (r.state === 'denied') tiltNote(blocked); else late(); }).catch(late);
+  } catch (e) { late(); }
+}
+function checkTilt() { if (tilt.raw) tiltNote(''); else if (tilt.on) explainTilt(false); }
 function startTilt() {
   if (tilt.on || !tilt.granted) return;
   window.addEventListener('devicemotion', onMotion); tilt.on = true; tilt.base = null; tilt.raw = null;
+  tiltNote(''); clearTimeout(tilt.timer); tilt.timer = setTimeout(checkTilt, 2000);   // 2秒待っても値が来なければ、理由を調べる
 }
-function stopTilt() { window.removeEventListener('devicemotion', onMotion); tilt.on = false; if (sim) sim.world.body = { x: 0, y: 0 }; }
+function stopTilt() { window.removeEventListener('devicemotion', onMotion); tilt.on = false; clearTimeout(tilt.timer); tiltNote(''); if (sim) sim.world.setBody(0, 0); }
 function askTiltPermission() {
   if (!needPerm || tilt.granted || !opt.tilt || tilt.asking) return;
   tilt.asking = true;
   DeviceMotionEvent.requestPermission().then((r) => {
     tilt.asking = false;
     if (r === 'granted') { tilt.granted = true; startTilt(); }
-    else { opt.tilt = false; optTilt.checked = false; saveOpt(); story('傾きのセンサーが許可されませんでした'); }
+    else { opt.tilt = false; optTilt.checked = false; saveOpt(); story('傾きのセンサーが許可されませんでした（理由は設定に）'); explainTilt(true); }
   }).catch(() => { tilt.asking = false; });
 }
 function updTilt(dt) {
   const w = sim.world;
-  if (!tilt.on || !tilt.raw || paused) { w.body = { x: 0, y: 0 }; return; }
+  if (!tilt.on || !tilt.raw || paused) { w.setBody(0, 0); return; }
   let ang = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
   if (ang !== tilt.ang) { tilt.ang = ang; tilt.base = null; }      // 画面が回ったら基準を取り直す
   const th = ang * Math.PI / 180, c = Math.cos(th), s = Math.sin(th), sg = opt.tiltFlip ? -1 : 1;
@@ -1705,7 +1908,7 @@ function updTilt(dt) {
   const m = Math.hypot(rx, ry), sc = m > TILT.dead ? (m - TILT.dead) / m : 0;   // 手の小さな震えは無視
   let ax = TILT.gain * rx * sc, ay = TILT.gain * ry * sc;
   const am = Math.hypot(ax, ay); if (am > TILT.max) { ax *= TILT.max / am; ay *= TILT.max / am; }
-  w.body = { x: ax, y: ay };
+  w.setBody(ax, ay);
 }
 const optTilt = $('#optTilt');
 if (isPhone) {
@@ -1723,11 +1926,16 @@ if (isPhone) {
 // ---------------- 状態の保存と、戻るボタン ----------------
 // 閉じても、次に開いたときに同じしずくの並びから始める（この端末のこのブラウザだけ）
 const SAVE_KEY = 'oilfilm.state';
+let savedMark = -1;
 function saveState() {
   try {
     const w = sim.world;
+    // v0.12 前に保存してから何も動いていなければ、書き直さない（3秒ごとの保存で、止まった液面を毎回書き出していた）
+    const mark = buildNo * 1e9 + (w.steps - w.skipped);
+    if (mark === savedMark && w.w === VW && w.h === VH) return;
     const drops = w.drops.map((d) => ({ a: Math.round(d.A0 * 10) / 10, x: d.x.map((v) => Math.round(v * 10) / 10), y: d.y.map((v) => Math.round(v * 10) / 10) }));
     localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, w: VW, h: VH, seed, drops }));
+    savedMark = mark;
   } catch (e) {}
 }
 function loadState() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s && s.v === 1 && s.drops && s.drops.length ? s : null; } catch (e) { return null; } }
@@ -1766,7 +1974,9 @@ function loop(now) {
     sim.frame(dt);
     msAvg += (performance.now() - t0 - msAvg) * 0.05;
   }
-  draw();
+  // v0.12 動いているあいだ（と、止まってから少しのあいだ）だけ描く。止まった液面は同じ絵なので描き直さない
+  if (sim.world.tip.on || (!paused && !sim.world.idle)) drawHold = DRAW_HOLD;
+  if (drawHold > 0) { drawHold--; draw(); drawn++; }
   checkEvents();
   frameNo++;
   if (!$('#debug').hidden && frameNo % 15 === 0) updDbg(msAvg);
@@ -1780,7 +1990,7 @@ let seen = false; try { seen = localStorage.getItem('oilfilm.seen') === '1'; loc
 showGuide();
 if (seen) setTimeout(hideGuide, 2600);
 setTimeout(() => $('#hint').classList.add('fade'), 26000);
-window.__oil = { get sim() { return sim; }, tilt, updTilt };   // 検証用
+window.__oil = { get sim() { return sim; }, tilt, updTilt, get drawn() { return drawn; }, get ms() { return msAvg; } };   // 検証用
 requestAnimationFrame((t) => { last = t; requestAnimationFrame(loop); });
 })();
 
