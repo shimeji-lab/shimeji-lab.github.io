@@ -1,12 +1,16 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="favicon.svg?v=1" type="image/svg+xml"><link rel="icon" href="favicon-32.png?v=1" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OIL FILM"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>OIL FILM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <!--
-  OIL FILM 油膜シミュレータ  v0.13「CONNECT · CUT · STRETCH」
+  OIL FILM 油膜シミュレータ  v0.14「CONNECT · CUT · STRETCH」
   準拠：OIL FILM 詳細設計書 v0.2（操作仕様）。計算は v0.3 で輪郭モデルに変更
   モデル：油のしずくの輪郭（点の輪）だけを追う。界面張力（線張力）・面積の保存・油の粘り・汁の抵抗・
           しずく同士の汁の膜（押し返しと、接触が続くと合体）・くびれでの分裂・箸（円い固体と付着）
 
   更新履歴
+  v0.14 2026-11-22 かき回したあと、寄り集まったしずくが毎秒10〜15 px で動き続け、液面が休めなかった不具合を修正（エンジン v0.14）。
+                   原因は v0.7 で入れた「触れたあとも残す引き合い」。重心どうしを結ぶ向きの引き合いと、輪郭の押し返しの向きがずれ、
+                   密集すると力がつり合わなかった。触れる手前で引き合いを 0 にし、9つの場面すべてで10〜32秒で全部止まるようにした。
+                   検証に B25 かき回したあと液面が止まる を追加
   v0.13 2026-11-11 傾きのセンサーが使えないとき、理由と直し方を設定の「傾けて揺らす」の下に出す（保存したファイルを開いた・アプリ内の表示・
                    ブラウザのサイトの設定でブロック）。これまでは「許可されませんでした」と出るだけだった。
                    新しい Chrome（Android）は iPhone と同じく許可を答える仕組みを持ち、そこで断られていた。エンジンは v0.12 のまま
@@ -285,6 +289,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <details class="hist">
       <summary>更新履歴</summary>
+      <p class="ver">v0.14（2026-11-22）かき回したあと、寄り集まったしずくがいつまでも小刻みに動き続ける不具合を修正。しばらくすると液面が止まり、計算と描画を休む</p>
       <p class="ver">v0.13（2026-11-11）傾きのセンサーが使えないとき、理由と直し方を設定の「傾けて揺らす」の下に出す</p>
       <p class="ver">v0.12（2026-11-10）計算を軽く（箸でかき回している間は約1/3。しずくの動きは v0.11 と同じ）。液面が止まったら計算と描画を休む。スマホを回してもしずくの並びが崩れない</p>
       <p class="ver">v0.11（2026-11-08）器の縁のしずくは流れにくく、壁に貼りつく。強く傾けると壁に沿って滑る。小さなしずくほど貼りつきやすい</p>
@@ -301,8 +306,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     </details>
     <div class="btn-row"><button class="chip" id="btnDevHide">裏モードを閉じる</button></div>
   </section>
-  <p class="ver" id="ver"><b>OIL FILM v0.13</b> CONNECT · CUT · STRETCH<br>
-  油のしずくの輪郭だけを、点の輪として計算しています。点を引き寄せる界面張力がしずくを丸くし、輪郭が囲む面積を毎回そろえて油の量を保ちます。しずくの間にはさまった汁の膜が押し返すので、ぶつけると軽く弾き、重なりかけても押し離します。箸が関わらないかぎり、しずく同士は合体しません。近くのしずく同士や画面の縁とは、ゆるく引き合って寄り添います（液面に浮いたもの同士が寄り合う、チェリオス効果と呼ばれる現象の近似）。寄り添ったしずくは弱く押し合い、接したところが少し平らになります。輪郭どうしが油をはさんで近づくと、そこで2つに分かれます。<br>
+  <p class="ver" id="ver"><b>OIL FILM v0.14</b> CONNECT · CUT · STRETCH<br>
+  油のしずくの輪郭だけを、点の輪として計算しています。点を引き寄せる界面張力がしずくを丸くし、輪郭が囲む面積を毎回そろえて油の量を保ちます。しずくの間にはさまった汁の膜が押し返すので、ぶつけると軽く弾き、重なりかけても押し離します。箸が関わらないかぎり、しずく同士は合体しません。近くのしずく同士や画面の縁とは、ゆるく引き合って寄り添います（液面に浮いたもの同士が寄り合う、チェリオス効果と呼ばれる現象の近似）。寄り添ったしずくは、間の汁の膜をはさんで止まります。輪郭どうしが油をはさんで近づくと、そこで2つに分かれます。<br>
   指は、汁に立てた箸の先です。先には油の膜が付いています。ゆっくり触れたしずくは箸の膜とつながって一緒に動き、2つ以上つながると箸を通して1つになります。速く動かした箸は膜とつながらず、外から横切るとしずくを切ります。<br>
   この版で決めた規則が6つあります。半径11 px より小さな粒は、丸ごと動かし、形は丸へ戻します（小さな粒ほど界面張力が勝って、ほとんど変形しないため）。丸く落ち着いたしずくは止めて、押し合いの細かな震えを消しています（箸が近づくか、速いしずくに押されると動き出します。つぶれた形のしずくは止めません）。引き合いは、しずくを円とみなし、すき間が14 px 広がるごとに約1/3に弱まる力で近似しています。速く引き伸ばされた細長いしずくは、いちばん細い所で切れます（2次元の輪郭だけでは起きない、厚みのある油の糸の切れやすさを規則として入れています）。箸の油の膜とつながるのは、箸が遅いとき（毎秒150 px 未満）に0.06秒以上触れたときです。箸のまわりの油の動きは、箸からの距離で弱まる引きずりで近似しています。スマホでは、傾けたり揺らしたりしたときの力（傾きの重力と、どんぶりの動きに取り残される慣性）を、すべての油に同じ強さでかけています。持ったままの傾きには2.5秒ほどで慣れるので、流れ続けることはありません。器の縁では汁が壁に引き止められるので、縁に近いほど流れを弱めています。壁に触れたしずくは、油が壁を濡らして貼りつき、壁に触れている長さに比例する力で止まります（流す力は油の量に比例するので、小さなしずくほど貼りつきやすい）。それより強く傾けると、壁に沿って滑ります。しずくの中の流れは解いていません。描画では、止まりかけた輪郭の 0.3 px ほどの細かな揺れだけをならしています。</p>
 </section>
@@ -327,6 +332,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
  *   v0.10 2026-11-08 どんぶりの傾き・揺れ：world.body（px/s²）をすべての点に同じ加速度として加える。
  *                    bodyWake より強いと、眠ったしずくも起き、眠らない。
  *
+ *   v0.14 2026-11-22 触れたあとに残していた引き合い（press）を 1→0 に。密集したしずくが動き続けて眠れなかった
+ *                    （かき回したあと5つの場面のうち4つで、100秒たっても10〜26個が毎秒10〜15 px で動いていた）。
+ *                    今は9つの場面すべてが10〜32秒で全部眠り、計算と描画を休める。
  *   v0.9 2026-11-07  押しつぶされた形のまま固まる不具合を修正：半径 11 px 未満のしずくも形は 0.08 秒で丸へ戻す
  *                    （丸ごと動かすだけだと、すき間に押し込まれた三角形のまま残った。相手と接している点は外へ押し出さない）。眠らせるのは丸いしずくだけ
  *                    （周長が同じ面積の円の 1.03 倍未満）。眠りの判定のならし速度は位置を進める前に計算。
@@ -361,7 +369,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 (function (root) {
   'use strict';
 
-  var ENGINE_VERSION = '0.12';
+  var ENGINE_VERSION = '0.14';
 
   function mulberry32(seed) {
     var a = seed >>> 0;
@@ -407,7 +415,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
     sleepRound: 1.03, // これより丸いしずくだけ眠らせる（つぶれた形のまま固まらないように）
     tRound: 0.08,    // 小さなしずくが丸に戻る時間（s）
     pressMerge: false, // 箸で押しつけたしずくが隣と合体するか（v0.8 でやめた。つながるのは箸の膜に両方が触れたときだけ）
-    press: 1,        // 触れたあとも残す引き合いの割合（0〜1）。押し合って、接したところが少し平らになる
+    press: 0,        // 触れたあとも残す引き合いの割合（0〜1）。v0.14 で 1→0：触れたら引き合いは止め、汁の膜の押し返しとつり合って止まる
+                     // （1 だと、重心どうしを結ぶ引き合いと輪郭の押し返しの向きがずれ、密集したしずくが毎秒10 px ほどで動き続けて休めなかった）
     gAtt: 40,        // しずく同士・しずくと縁が引き合う強さ（px/s²）。浮いたもの同士が寄るチェリオス効果の近似
     lAtt: 14,        // その届く距離（px。毛管長に当たる）
     minArea: 70,     // これより小さい粒は消える（px²。消えた量は記録する）
@@ -1386,7 +1395,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
 </script>
 <script>
-/* OIL FILM 検証 v0.12（v0.12 で B22 画面を回す・B23 画面が少し縮む・B24 止まった液面は計算を省くを追加。傾きの力は setBody で入れる。v0.11 で B20 縁は流れにくい・B21 強く傾けると滑るを追加。v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
+/* OIL FILM 検証 v0.14（v0.14 で B25 かき回したあと液面が止まるを追加。v0.12 で B22 画面を回す・B23 画面が少し縮む・B24 止まった液面は計算を省くを追加。傾きの力は setBody で入れる。v0.11 で B20 縁は流れにくい・B21 強く傾けると滑るを追加。v0.10 で B18 傾ける・B19 揺らすと起きるを追加。v0.9 は基準の変更なし。押しつぶされた形の確認は shape.js / jit2.js で。v0.8 で B12 を「押しつけるだけでは合体しない」に変更し、B17 小さな粒の集まりを追加。v0.7 で A01 の基準を「寄り集まる動きは可（毎秒20px未満）」に。v0.6 で A01 の基準を「引き合いで寄るのは可」に、B16 の基準を縁のやわらかい押し返しに合わせた。輪郭モデル。v0.5 で B14 を「押し離す」に変更し、B15 引き合い・B16 縁に寄るを追加。ブラウザの裏モードと Node の両方で動く） */
 (function (root) {
   'use strict';
   var C = root.OilContour || (typeof require !== 'undefined' ? require('./contour.js') : null);
@@ -1564,6 +1573,17 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
       else for (var k = 0; k < A.length; k++) { if (A[k].x.length !== B[k].x.length) { d = Infinity; break; } for (var i = 0; i < A[k].x.length; i++) d = Math.max(d, Math.abs(A[k].x[i] - B[k].x[i]), Math.abs(A[k].y[i] - B[k].y[i])); }
       var tot = a.s.world.steps;
       return { ok: d === 0 && a.sk > 1000 && b.sk === 0, detail: '放置40秒で省いた刻み ' + a.sk + '（省かない設定では ' + b.sk + '）。そのあと箸でなぞった結果の差の最大 ' + d + ' px' };
+    } },
+    { id: 'B25', name: 'かき回したあと、液面が止まる（2つの配置・45秒まで）', fn: function () {
+      var res = [2, 4].map(function (seed) {
+        var s = new C.Sim(W, H); C.scatter(s.world, seed); run(s, 2);
+        trace(s, [[60, 150], [330, 300], [60, 450], [330, 600], [60, 700]], 400);
+        trace(s, [[300, 120], [100, 400], [300, 680]], 300);
+        for (var sec = 1; sec <= 45; sec++) { run(s, 1); if (s.world.drops.every(function (d) { return d.sleep; })) break; }
+        var aw = s.world.drops.filter(function (d) { return !d.sleep; }).length, sk0 = s.world.skipped; run(s, 1);
+        return { ok: aw === 0 && s.world.skipped > sk0, txt: (aw === 0 ? sec + '秒で全部止まった' : '45秒後も ' + aw + ' 個が動いている') + '（' + s.world.drops.length + '個）' };
+      });
+      return { ok: res.every(function (r) { return r.ok; }), detail: res.map(function (r) { return r.txt; }).join('、') + '。止まったあとは計算を省く' };
     } },
     { id: 'B10', name: '同じ初期状態・同じ軌跡の再生', fn: function () {
       var a = mk(PAIR), b = mk(PAIR), d = 0;
@@ -1820,7 +1840,7 @@ $('#sweepMap').innerHTML = [
   '           つながっていないしずくは、箸に押される（速く横切ると切れる）',
   '<em>重なり</em>   相手の内側に入った点を外へ押し出す（合体はしない）',
   '<em>引き合い</em> しずく同士・縁と ' + P.gAtt + ' px/s² × exp(−すき間/' + P.lAtt + ' px) で寄る。',
-  '           触れたあとも弱く押し合い、接したところが少し平らになる',
+  '           触れる手前で引き合いは 0 になり、汁の膜の押し返しとつり合って止まる',
   '<em>傾き</em>     スマホのみ。−（重力込みの加速度）の画面に沿った成分から、' + 2.5 + ' 秒で追う基準を引き、',
   '           1 m/s² あたり 60 px/s²（上限 900）をすべての点に加える。' + P.bodyWake + ' px/s² を超えると眠ったしずくも起きる',
   '<em>器の縁</em>   縁から ' + P.wallLayer + ' px ほどで傾きの流れが弱まる（縁ぎりぎりで ' + P.wallFloor + ' 倍）。',
